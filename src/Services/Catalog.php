@@ -79,6 +79,7 @@ final class Catalog
             'rules' => $this->rules($product),
             'piece_weight_g' => $product['piece_weight_g'],
             'colors' => array_map(static fn (array $color): array => [
+                'id' => $color['id'],
                 'code' => $color['code'],
                 'name' => $color['name'],
                 'slug' => $color['slug'],

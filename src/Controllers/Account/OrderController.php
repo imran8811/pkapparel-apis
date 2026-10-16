@@ -10,17 +10,87 @@ use App\Core\Response;
 use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Models\Order;
+use App\Models\OrderDocument;
+use App\Models\OrderPayment;
+use App\Models\OrderPhoto;
+use App\Services\OrderDocuments;
+use App\Services\OrderPdfs;
 use App\Services\OrderService;
-use App\Services\ProformaInvoice;
+use App\Services\Production;
 
-/** Checkout and the buyer's own orders: list, detail, proforma invoice, cancel, report a payment. */
+/**
+ * Checkout and the buyer's own orders: list, detail, documents (proforma invoice, balance invoice,
+ * receipts, files from staff), production photos, cancel, report a payment.
+ */
 final class OrderController
 {
     public function __construct(
         private readonly Order $orders,
         private readonly OrderService $service,
-        private readonly ProformaInvoice $invoices,
+        private readonly OrderPdfs $pdfs,
+        private readonly OrderPayment $payments,
+        private readonly OrderDocument $documents,
+        private readonly OrderDocuments $documentFiles,
+        private readonly OrderPhoto $photos,
+        private readonly Production $production,
     ) {
+    }
+
+    /** GET /v1/account/orders/{orderNo}/invoice: the balance invoice, once the order is ready to ship. */
+    public function invoice(Request $request): Response
+    {
+        $order = $this->order($request);
+        if ($order['balance_invoice_no'] === null) {
+            throw HttpException::notFound('The invoice for the balance is issued when your order is ready to ship.');
+        }
+        $pdf = $this->pdfs->balanceInvoice($this->service->present($order, false), $this->service->bank());
+
+        return Response::file($pdf, 'application/pdf', OrderPdfs::invoiceFilename($order['balance_invoice_no']));
+    }
+
+    /** GET /v1/account/orders/{orderNo}/receipts/{receiptNo} */
+    public function receipt(Request $request): Response
+    {
+        $order = $this->order($request);
+        $payment = $this->payments->findByReceipt($order['id'], (string) $request->param('receiptNo'));
+        if ($payment === null) {
+            throw HttpException::notFound('This receipt does not exist.');
+        }
+        $pdf = $this->pdfs->receipt($this->service->present($order, false), OrderService::presentPayment($payment, true));
+
+        return Response::file($pdf, 'application/pdf', OrderPdfs::receiptFilename((string) $payment['receipt_no']));
+    }
+
+    /** GET /v1/account/orders/{orderNo}/documents/{id}: a file staff shared with the buyer. */
+    public function document(Request $request): Response
+    {
+        $order = $this->order($request);
+        $document = $this->documents->find((int) $request->param('id'));
+        if ($document === null || $document['order_id'] !== $order['id'] || !$document['is_public']) {
+            throw HttpException::notFound('This document does not exist.');
+        }
+        $content = $this->documentFiles->content($document);
+        if ($content === null) {
+            throw HttpException::notFound('This file is missing.');
+        }
+
+        return Response::file($content, $document['mime'], OrderDocuments::filename($document, $order['order_no']));
+    }
+
+    /** GET /v1/account/orders/{orderNo}/photos/{id}?size=preview|full: a production photo of this order. */
+    public function photo(Request $request): Response
+    {
+        $order = $this->order($request);
+        $photo = $this->photos->find((int) $request->param('id'));
+        if ($photo === null || $photo['order_id'] !== $order['id']) {
+            throw HttpException::notFound('This photo does not exist.');
+        }
+        $content = $this->production->photoFile($photo, $request->query('size') !== 'full');
+        if ($content === null) {
+            throw HttpException::notFound('This photo file is missing.');
+        }
+
+        return Response::file($content, 'image/jpeg', "{$order['order_no']}-photo-{$photo['id']}.jpg", true);
     }
 
     /** GET /v1/account/checkout?address_id=&country= */
@@ -83,9 +153,9 @@ final class OrderController
         if ($order['status'] === 'cancelled') {
             throw new HttpException(409, 'order_cancelled', 'This order was cancelled, so it has no proforma invoice.');
         }
-        $pdf = $this->invoices->render($this->service->present($order, false), $this->service->bank());
+        $pdf = $this->pdfs->proforma($this->service->present($order, false), $this->service->bank());
 
-        return Response::file($pdf, 'application/pdf', ProformaInvoice::filename($order['order_no']));
+        return Response::file($pdf, 'application/pdf', OrderPdfs::proformaFilename($order['order_no']));
     }
 
     /** POST /v1/account/orders/{orderNo}/cancel {reason} */

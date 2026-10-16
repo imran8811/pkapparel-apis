@@ -77,7 +77,7 @@ if (isset($options['deactivate']) || isset($options['activate'])) {
     exit(0);
 }
 
-$password = generatePassword();
+$password = StaffUser::generatePassword();
 
 if (isset($options['reset-password'])) {
     $existing ?? $fail("No account for {$email}.");
@@ -104,15 +104,3 @@ $id = $staff->create($name, $email, $password, $role);
 echo "Created {$role} account #{$id} for {$name} <{$email}>\n";
 echo "Password: {$password}\n";
 echo "Log in at /admin/login and change the password under Account.\n";
-
-/** 16 characters without look-alikes (0/O, 1/l/I). */
-function generatePassword(int $length = 16): string
-{
-    $alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    $password = '';
-    for ($i = 0; $i < $length; $i++) {
-        $password .= $alphabet[random_int(0, strlen($alphabet) - 1)];
-    }
-
-    return $password;
-}

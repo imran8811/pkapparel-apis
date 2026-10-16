@@ -85,6 +85,10 @@ return static function (Router $router): void {
             $router->get('/orders/{orderNo:PK-[0-9-]+}/proforma', [Account\OrderController::class, 'proforma']);
             $router->post('/orders/{orderNo:PK-[0-9-]+}/cancel', [Account\OrderController::class, 'cancel']);
             $router->post('/orders/{orderNo:PK-[0-9-]+}/payments', [Account\OrderController::class, 'submitPayment']);
+            $router->get('/orders/{orderNo:PK-[0-9-]+}/invoice', [Account\OrderController::class, 'invoice']);
+            $router->get('/orders/{orderNo:PK-[0-9-]+}/receipts/{receiptNo:RCPT-[0-9-]+}', [Account\OrderController::class, 'receipt']);
+            $router->get('/orders/{orderNo:PK-[0-9-]+}/documents/{id:\d+}', [Account\OrderController::class, 'document']);
+            $router->get('/orders/{orderNo:PK-[0-9-]+}/photos/{id:\d+}', [Account\OrderController::class, 'photo']);
         }, [RequireCustomer::class]);
 
         // Admin panel
@@ -146,7 +150,35 @@ return static function (Router $router): void {
             $router->get('/orders', [Admin\OrderController::class, 'index']);
             $router->get('/orders/{id:\d+}', [Admin\OrderController::class, 'show']);
             $router->get('/orders/{id:\d+}/proforma', [Admin\OrderController::class, 'proforma']);
+            $router->get('/orders/{id:\d+}/invoice', [Admin\OrderController::class, 'invoice']);
+            $router->post('/orders/{id:\d+}/hold', [Admin\OrderController::class, 'hold']);
+            $router->post('/orders/{id:\d+}/resume', [Admin\OrderController::class, 'resume']);
+            $router->post('/orders/{id:\d+}/cancel', [Admin\OrderController::class, 'cancel']);
+            $router->put('/orders/{id:\d+}/due-date', [Admin\OrderController::class, 'dueDate']);
+            $router->put('/orders/{id:\d+}/charges', [Admin\OrderController::class, 'charges']);
+            $router->post('/orders/{id:\d+}/ready-to-ship', [Admin\OrderController::class, 'readyToShip']);
+            $router->post('/orders/{id:\d+}/ship', [Admin\OrderController::class, 'ship']);
+            $router->post('/orders/{id:\d+}/deliver', [Admin\OrderController::class, 'deliver']);
+            $router->post('/orders/{id:\d+}/notes', [Admin\OrderController::class, 'note']);
+            $router->put('/orders/{id:\d+}/stages/{stage:[a-z]+}', [Admin\ProductionController::class, 'stage']);
+            $router->post('/orders/{id:\d+}/photos', [Admin\ProductionController::class, 'upload']);
+            $router->get('/order-photos/{id:\d+}', [Admin\ProductionController::class, 'file']);
+            $router->delete('/order-photos/{id:\d+}', [Admin\ProductionController::class, 'destroy']);
+            $router->post('/orders/{id:\d+}/documents', [Admin\OrderDocumentController::class, 'store']);
+            $router->get('/order-documents/{id:\d+}', [Admin\OrderDocumentController::class, 'file']);
+            $router->delete('/order-documents/{id:\d+}', [Admin\OrderDocumentController::class, 'destroy']);
+
+            $router->get('/payments', [Admin\PaymentController::class, 'index']);
+            $router->post('/payments/{id:\d+}/confirm', [Admin\PaymentController::class, 'confirm']);
+            $router->post('/payments/{id:\d+}/reject', [Admin\PaymentController::class, 'reject']);
+            $router->get('/payments/{id:\d+}/receipt', [Admin\PaymentController::class, 'receipt']);
             $router->get('/payments/{id:\d+}/slip', [Admin\OrderController::class, 'slip']);
+            $router->post('/orders/{id:\d+}/payments', [Admin\PaymentController::class, 'record']);
+
+            $router->get('/staff', [Admin\StaffController::class, 'index']);
+            $router->post('/staff', [Admin\StaffController::class, 'store']);
+            $router->put('/staff/{id:\d+}', [Admin\StaffController::class, 'update']);
+            $router->post('/staff/{id:\d+}/reset-password', [Admin\StaffController::class, 'resetPassword']);
 
             $router->get('/shipping/zones', [Admin\ShippingController::class, 'index']);
             $router->post('/shipping/zones', [Admin\ShippingController::class, 'store']);

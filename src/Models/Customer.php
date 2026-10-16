@@ -120,6 +120,12 @@ final class Customer
         return ['items' => array_map(static fn (array $row): array => self::presentForStaff($row), $rows), 'total' => $total];
     }
 
+    /** Accounts opened in the last $days days. */
+    public function countSince(int $days): int
+    {
+        return (int) $this->db->fetchValue('SELECT COUNT(*) FROM customers WHERE created_at >= UTC_TIMESTAMP() - INTERVAL ? DAY', [$days]);
+    }
+
     /** @return array{active: int, blocked: int, unverified: int} */
     public function counts(): array
     {

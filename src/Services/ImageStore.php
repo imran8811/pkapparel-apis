@@ -68,6 +68,29 @@ final class ImageStore
     }
 
     /**
+     * A smaller JPEG copy of a private image stored by storePrivate() (for galleries), saved next to it as "…-preview.jpg".
+     *
+     * @return string the preview's path, relative to storage/private
+     */
+    public function privatePreview(string $relativePath, int $maxSide): string
+    {
+        $baseDir = rtrim($this->config->string('paths.storage'), '/\\') . '/private';
+        $source = $baseDir . '/' . $relativePath;
+        $image = str_ends_with($relativePath, '.png') ? @imagecreatefrompng($source) : @imagecreatefromjpeg($source);
+        if (!$image instanceof GdImage) {
+            throw new \RuntimeException('Could not read the image ' . $relativePath);
+        }
+
+        $preview = self::resize($image, false, $maxSide);
+        $relative = (string) preg_replace('/\.(?:jpe?g|png)$/', '', $relativePath) . '-preview.jpg';
+        if (!imagejpeg($preview, $baseDir . '/' . $relative, 80)) {
+            throw new \RuntimeException('Could not save the preview ' . $relative);
+        }
+
+        return $relative;
+    }
+
+    /**
      * @param string $relative target path below $baseDir, without the extension (it depends on the image)
      * @return array{path: string, width: int, height: int, size: int}
      */
@@ -189,11 +212,11 @@ final class ImageStore
         return false;
     }
 
-    private static function resize(GdImage $image, bool $keepTransparency): GdImage
+    private static function resize(GdImage $image, bool $keepTransparency, int $maxSide = self::MAX_SIDE): GdImage
     {
         $width = imagesx($image);
         $height = imagesy($image);
-        $scale = min(1, self::MAX_SIDE / max($width, $height));
+        $scale = min(1, $maxSide / max($width, $height));
         $newWidth = max(1, (int) round($width * $scale));
         $newHeight = max(1, (int) round($height * $scale));
 

@@ -7,8 +7,11 @@ namespace App\Controllers\Admin;
 use App\Core\Request;
 use App\Core\Response;
 use App\Models\Certification;
+use App\Models\Customer;
 use App\Models\Faq;
 use App\Models\Inquiry;
+use App\Models\Order;
+use App\Models\OrderPayment;
 use App\Models\Post;
 use App\Models\Testimonial;
 
@@ -21,6 +24,9 @@ final class DashboardController extends AdminController
         private readonly Faq $faqs,
         private readonly Testimonial $testimonials,
         private readonly Certification $certifications,
+        private readonly Order $orders,
+        private readonly OrderPayment $payments,
+        private readonly Customer $customers,
     ) {
     }
 
@@ -29,7 +35,17 @@ final class DashboardController extends AdminController
         $role = $this->staff($request)['role'];
         $data = [];
 
+        if (in_array($role, ['admin', 'sales', 'production'], true)) {
+            $counts = $this->orders->countByStatus();
+            $data['orders'] = [
+                'awaiting_deposit' => $counts['awaiting_deposit'] ?? 0,
+                'payments_to_check' => $this->payments->countByStatus('submitted'),
+                'open' => array_sum(array_intersect_key($counts, array_flip(Order::OPEN_STATUSES))),
+            ];
+        }
+
         if (in_array($role, ['admin', 'sales'], true)) {
+            $data['customers'] = ['new_30_days' => $this->customers->countSince(30)];
             $counts = $this->inquiries->countByStatus();
             $data['inquiries'] = [
                 'new' => $counts['new'],

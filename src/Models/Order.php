@@ -111,13 +111,18 @@ final class Order
      *
      * @return array{items: list<array<string, mixed>>, total: int}
      */
-    public function adminList(?string $status, ?string $search, int $page, int $perPage): array
+    public function adminList(?string $status, ?string $search, int $page, int $perPage, ?string $lateOn = null): array
     {
         $where = ['1 = 1'];
         $params = [];
         if ($status !== null) {
             $where[] = 'o.status = ?';
             $params[] = $status;
+        }
+        if ($lateOn !== null) {
+            // Due before this (Pakistan) date and not ready yet.
+            $where[] = "o.status IN ('confirmed', 'in_production') AND o.production_due_on < ?";
+            $params[] = $lateOn;
         }
         if ($search !== null && $search !== '') {
             $where[] = '(o.order_no LIKE ? OR c.company_name LIKE ? OR c.email LIKE ? OR o.buyer_reference LIKE ?)';
@@ -134,6 +139,77 @@ final class Order
         );
 
         return ['items' => $this->withLineSummaries(array_map(static fn (array $row): array => self::decode($row), $rows)), 'total' => $total];
+    }
+
+    /**
+     * Sets columns of an order (staff workflow: final freight, due date, balance invoice…).
+     *
+     * @param array<string, mixed> $fields
+     */
+    public function updateFields(int $id, array $fields): void
+    {
+        if ($fields !== []) {
+            $this->db->update('orders', $fields, ['id' => $id]);
+        }
+    }
+
+    /** Prices an "on request" add-on (or changes a price). */
+    public function priceAddon(int $orderId, int $addonId, int $unitCents): void
+    {
+        $this->db->execute(
+            'UPDATE order_addons SET unit_price_cents = ?, line_cents = ? * qty WHERE id = ? AND order_id = ?',
+            [$unitCents, $unitCents, $addonId, $orderId],
+        );
+        $this->db->execute(
+            'UPDATE orders SET addons_cents = (SELECT COALESCE(SUM(line_cents), 0) FROM order_addons WHERE order_id = ?) WHERE id = ?',
+            [$orderId, $orderId],
+        );
+    }
+
+    public function addPaid(int $orderId, int $cents): void
+    {
+        $this->db->execute('UPDATE orders SET paid_cents = paid_cents + ? WHERE id = ?', [$cents, $orderId]);
+    }
+
+    /** Orders whose production is late on this (Pakistan) date. */
+    public function countLate(string $today): int
+    {
+        return (int) $this->db->fetchValue(
+            "SELECT COUNT(*) FROM orders WHERE status IN ('confirmed', 'in_production') AND production_due_on < ?",
+            [$today],
+        );
+    }
+
+    /**
+     * Orders in production (or waiting for it) that are late or due by $until, soonest first (daily summary).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function dueBy(string $until): array
+    {
+        $rows = $this->db->fetchAll(
+            "SELECT * FROM orders WHERE status IN ('confirmed', 'in_production') AND production_due_on <= ? ORDER BY production_due_on, id",
+            [$until],
+        );
+
+        return array_map(static fn (array $row): array => self::decode($row), $rows);
+    }
+
+    /**
+     * Orders still waiting for the deposit with no payment reported (reminders and automatic cancelling).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function unpaid(): array
+    {
+        $rows = $this->db->fetchAll(
+            "SELECT o.* FROM orders o
+             WHERE o.status = 'awaiting_deposit'
+               AND NOT EXISTS (SELECT 1 FROM order_payments p WHERE p.order_id = o.id AND p.status IN ('submitted', 'confirmed'))
+             ORDER BY o.placed_at, o.id",
+        );
+
+        return array_map(static fn (array $row): array => self::decode($row), $rows);
     }
 
     /** @return array<string, int> status => number of orders */
@@ -178,6 +254,7 @@ final class Order
         $rows = $this->db->fetchAll('SELECT * FROM order_addons WHERE order_id = ? ORDER BY id', [$orderId]);
 
         return array_map(static fn (array $row): array => [
+            'id' => (int) $row['id'],
             'name' => (string) $row['name'],
             'pricing' => (string) $row['pricing'],
             'unit_price_cents' => $row['unit_price_cents'] === null ? null : (int) $row['unit_price_cents'],
@@ -283,13 +360,13 @@ final class Order
         foreach (self::JSON_COLUMNS as $column) {
             $row[$column] = $row[$column] === null ? null : json_decode((string) $row[$column], true);
         }
-        foreach (['id', 'customer_id', 'total_pcs', 'goods_cents', 'addons_cents', 'deposit_percent', 'deposit_cents', 'paid_cents', 'lead_time_days'] as $column) {
+        foreach (['id', 'customer_id', 'total_pcs', 'goods_cents', 'addons_cents', 'deposit_percent', 'deposit_cents', 'paid_cents', 'lead_time_days', 'reminders_sent'] as $column) {
             $row[$column] = (int) $row[$column];
         }
         foreach (['freight_estimate_cents', 'freight_final_cents'] as $column) {
             $row[$column] = $row[$column] === null ? null : (int) $row[$column];
         }
-        foreach (['placed_at', 'confirmed_at', 'shipped_at', 'delivered_at', 'cancelled_at', 'created_at', 'updated_at'] as $column) {
+        foreach (['placed_at', 'confirmed_at', 'balance_invoiced_at', 'shipped_at', 'delivered_at', 'cancelled_at', 'created_at', 'updated_at'] as $column) {
             $row[$column] = $row[$column] === null ? null : gmdate(DATE_ATOM, (int) strtotime($row[$column] . ' UTC'));
         }
 

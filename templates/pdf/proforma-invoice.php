@@ -1,12 +1,16 @@
 <?php
 /**
- * Proforma invoice (A4) rendered by dompdf: tables for layout (no flexbox or grid), DejaVu Sans for full Unicode.
- * Variables: $order (presented order), $bank (array|null), $company, $contact, $addresses (settings), $logo (data URI), $e (escaper).
+ * Proforma invoice, or the balance invoice issued when an order is ready to ship (A4, rendered by dompdf:
+ * tables for layout, no flexbox or grid; DejaVu Sans for full Unicode).
+ * Variables: $order (presented order), $document (kind: proforma|balance, number, date), $bank (array|null),
+ * $company, $contact, $addresses (settings), $logo (data URI), $e (escaper).
  */
 
 use App\Core\Format;
 
 $amounts = $order['amounts'];
+$isBalance = ($document['kind'] ?? 'proforma') === 'balance';
+$received = array_values(array_filter($order['payments'] ?? [], static fn (array $p): bool => $p['status'] === 'confirmed'));
 $customer = $order['customer'];
 $address = $order['address'];
 $factory = is_array($addresses) && isset($addresses[0]) ? $addresses[0] : null;
@@ -28,7 +32,7 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Proforma invoice <?= $e($order['order_no']) ?></title>
+<title><?= $isBalance ? 'Invoice ' . $e($document['number']) : 'Proforma invoice ' . $e($order['order_no']) ?></title>
 <style>
   @page { margin: 34px 38px 46px; }
   body { font-family: 'DejaVu Sans', sans-serif; font-size: 9.5px; color: #0b132b; line-height: 1.45; }
@@ -59,14 +63,21 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
 <table>
   <tr>
     <td style="width: 55%;">
-      <img src="<?= $logo ?>" style="height: 46px;" alt="PK Apparel">
+      <img src="<?= $logo ?>" style="height: 56px;" alt="PK Apparel">
     </td>
     <td style="text-align: right;">
-      <h1>PROFORMA INVOICE</h1>
+      <h1><?= $isBalance ? 'INVOICE' : 'PROFORMA INVOICE' ?></h1>
       <table style="margin-top: 6px;">
-        <tr><td class="muted" style="text-align: right; padding-right: 8px;">PI / order no.</td><td class="mono" style="width: 1%; white-space: nowrap; font-weight: bold;"><?= $e($order['order_no']) ?></td></tr>
-        <tr><td class="muted" style="text-align: right; padding-right: 8px;">Date</td><td style="white-space: nowrap;"><?= $e(Format::date($order['placed_at'])) ?></td></tr>
-        <tr><td class="muted" style="text-align: right; padding-right: 8px;">Valid until</td><td style="white-space: nowrap;"><?= $e(Format::date($order['valid_until'])) ?></td></tr>
+        <?php if ($isBalance): ?>
+          <tr><td class="muted" style="text-align: right; padding-right: 8px;">Invoice no.</td><td class="mono" style="width: 1%; white-space: nowrap; font-weight: bold;"><?= $e($document['number']) ?></td></tr>
+          <tr><td class="muted" style="text-align: right; padding-right: 8px;">Order no.</td><td class="mono" style="white-space: nowrap;"><?= $e($order['order_no']) ?></td></tr>
+          <tr><td class="muted" style="text-align: right; padding-right: 8px;">Date</td><td style="white-space: nowrap;"><?= $e(Format::date($document['date'])) ?></td></tr>
+          <tr><td class="muted" style="text-align: right; padding-right: 8px;">Due</td><td style="white-space: nowrap;">Before shipment</td></tr>
+        <?php else: ?>
+          <tr><td class="muted" style="text-align: right; padding-right: 8px;">PI / order no.</td><td class="mono" style="width: 1%; white-space: nowrap; font-weight: bold;"><?= $e($order['order_no']) ?></td></tr>
+          <tr><td class="muted" style="text-align: right; padding-right: 8px;">Date</td><td style="white-space: nowrap;"><?= $e(Format::date($order['placed_at'])) ?></td></tr>
+          <tr><td class="muted" style="text-align: right; padding-right: 8px;">Valid until</td><td style="white-space: nowrap;"><?= $e(Format::date($order['valid_until'])) ?></td></tr>
+        <?php endif; ?>
         <?php if ($order['buyer_reference']): ?>
           <tr><td class="muted" style="text-align: right; padding-right: 8px;">Your reference</td><td style="white-space: nowrap;"><?= $e($order['buyer_reference']) ?></td></tr>
         <?php endif; ?>
@@ -120,11 +131,11 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
   <thead>
     <tr>
       <th style="width: 4%;">#</th>
-      <th>Style and color</th>
-      <th>Sizes × pieces</th>
-      <th class="num">Qty</th>
-      <th class="num">Price / pc</th>
-      <th class="num">Amount</th>
+      <th style="width: 36%;">Style and color</th>
+      <th style="width: 30%;">Sizes × pieces</th>
+      <th class="num" style="width: 8%;">Qty</th>
+      <th class="num" style="width: 10%;">Price / pc</th>
+      <th class="num" style="width: 12%;">Amount</th>
     </tr>
   </thead>
   <tbody>
@@ -135,7 +146,7 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
           <strong><?= $e($line['style_name']) ?></strong><?= $line['style_no'] ? ' <span class="muted mono">' . $e($line['style_no']) . '</span>' : '' ?><br>
           <?= $e($line['color_name']) ?> <span class="muted mono">(<?= $e($line['color_code']) ?>)</span>
         </td>
-        <td style="width: 30%;"><?= $e(Format::sizes($line['size_qty'])) ?></td>
+        <td><?= $e(Format::sizes($line['size_qty'])) ?></td>
         <td class="num"><?= number_format($line['qty']) ?></td>
         <td class="num"><?= $e(Format::money($line['unit_price_cents'])) ?></td>
         <td class="num"><?= $e(Format::money($line['line_cents'])) ?></td>
@@ -173,8 +184,15 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
         <?php endif; ?>
         <tr><td>Freight</td><td class="num"><?= $e($freightLabel) ?></td></tr>
         <tr class="grand"><td>Total</td><td class="num"><?= $e(Format::money($amounts['total_cents'])) ?></td></tr>
-        <tr><td class="muted"><?= (int) $amounts['deposit_percent'] ?>% deposit (goods and add-ons)</td><td class="num muted"><?= $e(Format::money($amounts['deposit_cents'])) ?></td></tr>
-        <tr><td class="muted">Balance before shipment</td><td class="num muted"><?= $e(Format::money($amounts['balance_cents'])) ?></td></tr>
+        <?php if ($isBalance): ?>
+          <?php foreach ($received as $payment): ?>
+            <tr><td class="muted"><?= $e($payment['kind_label']) ?> received<?= $payment['receipt_no'] ? ' (' . $e($payment['receipt_no']) . ')' : '' ?></td><td class="num muted">−<?= $e(Format::money((int) ($payment['received_cents'] ?? $payment['amount_cents']))) ?></td></tr>
+          <?php endforeach; ?>
+          <tr class="grand"><td>Balance due</td><td class="num"><?= $e(Format::money(max(0, $amounts['total_cents'] - $amounts['paid_cents']))) ?></td></tr>
+        <?php else: ?>
+          <tr><td class="muted"><?= (int) $amounts['deposit_percent'] ?>% deposit (goods and add-ons)</td><td class="num muted"><?= $e(Format::money($amounts['deposit_cents'])) ?></td></tr>
+          <tr><td class="muted">Balance before shipment</td><td class="num muted"><?= $e(Format::money($amounts['balance_cents'])) ?></td></tr>
+        <?php endif; ?>
       </table>
     </td>
   </tr>

@@ -54,15 +54,18 @@ final class Response
         return new self(204);
     }
 
-    /** A file download (PDF invoices, payment slips). The name may only contain safe characters. */
-    public static function file(string $content, string $contentType, string $filename): self
+    /**
+     * A private file (PDF invoices, payment slips, production photos). The name may only contain safe characters.
+     * Inline files (photos) are shown in the page instead of downloaded.
+     */
+    public static function file(string $content, string $contentType, string $filename, bool $inline = false): self
     {
         $safeName = (string) preg_replace('/[^A-Za-z0-9._-]+/', '-', $filename);
 
         return new self(200, [
             'Content-Type' => $contentType,
             'Content-Length' => (string) strlen($content),
-            'Content-Disposition' => 'attachment; filename="' . $safeName . '"',
+            'Content-Disposition' => ($inline ? 'inline' : 'attachment') . '; filename="' . $safeName . '"',
             'Cache-Control' => 'private, no-store',
         ], $content);
     }

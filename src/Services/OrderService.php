@@ -13,8 +13,12 @@ use App\Models\Cart;
 use App\Models\CustomerAddress;
 use App\Models\CustomizationOption;
 use App\Models\Order;
+use App\Models\OrderDocument;
 use App\Models\OrderPayment;
+use App\Models\OrderPhoto;
+use App\Models\OrderStage;
 use App\Models\Settings;
+use App\Models\Shipment;
 use PDOException;
 use Throwable;
 
@@ -41,6 +45,10 @@ final class OrderService
         private readonly PaymentSlips $slips,
         private readonly OrderMailer $mailer,
         private readonly Logger $logger,
+        private readonly OrderStage $stages,
+        private readonly OrderPhoto $photos,
+        private readonly OrderDocument $documents,
+        private readonly Shipment $shipments,
     ) {
     }
 
@@ -246,7 +254,7 @@ final class OrderService
         $presented = [
             'order_no' => $order['order_no'],
             'status' => $order['status'],
-            'status_label' => Order::STATUSES[$order['status']] ?? $order['status'],
+            'status_label' => self::statusLabel($order['status'], $amounts),
             'placed_at' => $order['placed_at'],
             'valid_until' => $placed->modify('+' . $this->commerce->piValidDays() . ' days')->format('Y-m-d'),
             'currency' => $order['currency'],
@@ -272,11 +280,20 @@ final class OrderService
             'bank' => !$forStaff && $canPay ? $this->bank() : null,
             'confirmed_at' => $order['confirmed_at'],
             'production_due_on' => $order['production_due_on'],
+            'production_days_left' => self::daysLeft($order),
+            'stages' => OrderStage::timeline($this->stages->forOrder($order['id'])),
+            'photos' => array_map(static fn (array $photo): array => OrderPhoto::present($photo), $this->photos->forOrder($order['id'])),
+            'documents' => $this->documentList($order, $payments, $forStaff),
+            'shipment' => $this->shipments->forOrder($order['id']),
+            'balance_invoice_no' => $order['balance_invoice_no'],
+            'balance_invoiced_at' => $order['balance_invoiced_at'],
+            'shipped_at' => $order['shipped_at'],
+            'delivered_at' => $order['delivered_at'],
             'cancelled_at' => $order['cancelled_at'],
             'cancel_reason' => $order['cancel_reason'],
         ];
         if ($forStaff) {
-            $presented = ['id' => $order['id'], 'customer_id' => $order['customer_id']] + $presented;
+            $presented = ['id' => $order['id'], 'customer_id' => $order['customer_id']] + $presented + ['status_before_hold' => $order['status_before_hold']];
         }
 
         return $presented;
@@ -294,7 +311,7 @@ final class OrderService
         $summary = [
             'order_no' => $order['order_no'],
             'status' => $order['status'],
-            'status_label' => Order::STATUSES[$order['status']] ?? $order['status'],
+            'status_label' => self::statusLabel($order['status'], $amounts),
             'placed_at' => $order['placed_at'],
             'total_pcs' => $order['total_pcs'],
             'shipping_mode' => $order['shipping_mode'],
@@ -494,17 +511,90 @@ final class OrderService
             'status_label' => OrderPayment::STATUSES[$payment['status']] ?? $payment['status'],
             'rejection_reason' => $payment['rejection_reason'],
             'receipt_no' => $payment['receipt_no'],
+            'received_cents' => $payment['received_cents'],
+            'received_on' => $payment['received_on'],
+            'reviewed_at' => $payment['reviewed_at'],
             'created_at' => $payment['created_at'],
         ];
         if ($forStaff) {
             $presented = ['id' => $payment['id']] + $presented + [
                 'slip_name' => $payment['slip_name'],
                 'reviewed_by' => $payment['reviewed_by'],
-                'reviewed_at' => $payment['reviewed_at'],
+                'recorded_by_staff' => $payment['recorded_by_staff'],
             ];
         }
 
         return $presented;
+    }
+
+    /** The status as buyers and staff read it ("Ready to ship, paid" once nothing is left to pay). */
+    public static function statusLabel(string $status, array $amounts): string
+    {
+        if ($status === 'ready_to_ship' && $amounts['total_cents'] - $amounts['paid_cents'] <= 0) {
+            return 'Ready to ship, paid';
+        }
+
+        return Order::STATUSES[$status] ?? $status;
+    }
+
+    /**
+     * Days until the production due date (negative when late), for orders waiting for or in production.
+     *
+     * @param array<string, mixed> $order
+     */
+    public static function daysLeft(array $order): ?int
+    {
+        if ($order['production_due_on'] === null || !in_array($order['status'], ['confirmed', 'in_production'], true)) {
+            return null;
+        }
+        $today = Format::local()->setTime(0, 0);
+        $due = Format::local((string) $order['production_due_on'])->setTime(0, 0);
+
+        return (int) $today->diff($due)->format('%r%a');
+    }
+
+    /**
+     * The order's documents: the ones the site makes (proforma invoice, balance invoice, receipts)
+     * and the files staff attached (the buyer only sees the public ones).
+     *
+     * @param array<string, mixed> $order
+     * @param list<array<string, mixed>> $payments
+     * @return list<array<string, mixed>>
+     */
+    private function documentList(array $order, array $payments, bool $forStaff): array
+    {
+        $documents = [];
+        if ($order['status'] !== 'cancelled' || $forStaff) {
+            $documents[] = ['kind' => 'proforma', 'title' => 'Proforma invoice', 'number' => $order['order_no'], 'date' => $order['placed_at']];
+        }
+        if ($order['balance_invoice_no'] !== null) {
+            $documents[] = ['kind' => 'invoice', 'title' => 'Invoice for the balance', 'number' => $order['balance_invoice_no'], 'date' => $order['balance_invoiced_at']];
+        }
+        foreach ($payments as $payment) {
+            if ($payment['status'] === 'confirmed' && $payment['receipt_no'] !== null) {
+                $documents[] = [
+                    'kind' => 'receipt',
+                    'title' => 'Receipt, ' . strtolower(OrderPayment::KINDS[$payment['kind']] ?? $payment['kind']),
+                    'number' => $payment['receipt_no'],
+                    'date' => $payment['reviewed_at'],
+                ];
+            }
+        }
+        foreach ($this->documents->forOrder($order['id'], !$forStaff) as $file) {
+            $document = [
+                'kind' => 'file',
+                'id' => $file['id'],
+                'type' => $file['type'],
+                'title' => $file['title'],
+                'type_label' => OrderDocument::TYPES[$file['type']] ?? $file['type'],
+                'date' => $file['created_at'],
+                'mime' => $file['mime'],
+                'size_bytes' => $file['size_bytes'],
+            ];
+            $documents[] = $forStaff ? $document + ['is_public' => $file['is_public']] : $document;
+        }
+
+        return $documents;
     }
 
     /** Which payment the buyer can report in this status. */
