@@ -1,0 +1,6 @@
+# Uploaded files are data, never code
+Options -Indexes -ExecCGI
+
+<FilesMatch "\.(?i:php\d?|phtml|phar|pl|py|cgi|sh|asp|aspx|jsp)$">
+    Require all denied
+</FilesMatch>

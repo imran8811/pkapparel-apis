@@ -1,0 +1,18 @@
+# PK Apparel API: send every request that is not a real file to index.php
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Keep the Authorization header (some CGI/FastCGI setups drop it)
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# Never serve dotfiles (.env, .htaccess, .git …)
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
