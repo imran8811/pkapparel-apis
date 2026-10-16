@@ -59,6 +59,7 @@ final class AdminApiTest extends IntegrationTestCase
         $this->db->execute("DELETE FROM inquiries WHERE email = 'pipeline@example.test'");
         $limiter = new RateLimiter($this->db);
         $limiter->clear('staff-login-ip:' . self::TEST_IP);
+        $limiter->clear('inquiry:' . self::TEST_IP); // testInquiryFollowUp sends a public inquiry (5 per hour per IP)
         foreach (self::ACCOUNTS as $email) {
             $limiter->clear('staff-login:' . $email);
         }
@@ -232,7 +233,7 @@ final class AdminApiTest extends IntegrationTestCase
         $badContact = $this->send('PUT', '/v1/admin/settings/contact', ['phone' => 'call me', 'whatsapp' => '+92 310', 'email' => 'x'], $token);
         self::assertSame(['phone', 'whatsapp', 'email'], array_keys($badContact->decoded()['error']['fields']));
 
-        self::assertSame(404, $this->send('PUT', '/v1/admin/settings/bank', [], $token)->status());
+        self::assertSame(404, $this->send('PUT', '/v1/admin/settings/secrets', [], $token)->status());
     }
 
     public function testChangingThePasswordEndsOtherSessions(): void

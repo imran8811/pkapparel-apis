@@ -27,6 +27,7 @@ final class ImageStore
     public const FOLDERS = [
         'blog' => 'blog',
         'pages' => 'pages',
+        'products' => 'products',
         'factory' => 'site/factory',
         'certificates' => 'site/certificates',
     ];
@@ -45,12 +46,39 @@ final class ImageStore
             throw new ValidationException(['folder' => 'Unknown upload folder.']);
         }
 
+        $relative = sprintf('uploads/%s/%s/%s-%s', self::FOLDERS[$folder], gmdate('Y/m'), self::baseName($originalName), bin2hex(random_bytes(3)));
+
+        return $this->save($file, $this->publicDir(), $relative, self::MAX_BYTES);
+    }
+
+    /**
+     * Saves an image as a private file under storage/private (e.g. payment slips), which is never served directly.
+     *
+     * @return array{path: string, width: int, height: int, size: int} path is relative to storage/private, e.g. "payment-slips/2026/10/slip-9f3a….jpg"
+     * @throws ValidationException when the file is not a usable image
+     */
+    public function storePrivate(string $file, string $originalName, string $folder, int $maxBytes): array
+    {
+        if (preg_match('/^[a-z0-9-]+$/', $folder) !== 1) {
+            throw new \InvalidArgumentException("Invalid private folder [{$folder}].");
+        }
+        $relative = sprintf('%s/%s/%s-%s', $folder, gmdate('Y/m'), self::baseName($originalName), bin2hex(random_bytes(8)));
+
+        return $this->save($file, rtrim($this->config->string('paths.storage'), '/\\') . '/private', $relative, $maxBytes);
+    }
+
+    /**
+     * @param string $relative target path below $baseDir, without the extension (it depends on the image)
+     * @return array{path: string, width: int, height: int, size: int}
+     */
+    private function save(string $file, string $baseDir, string $relative, int $maxBytes): array
+    {
         $size = is_file($file) ? (int) filesize($file) : 0;
         if ($size === 0) {
             throw new ValidationException(['file' => 'Choose an image to upload.']);
         }
-        if ($size > self::MAX_BYTES) {
-            throw new ValidationException(['file' => 'The image is too large. The limit is 10 MB.']);
+        if ($size > $maxBytes) {
+            throw new ValidationException(['file' => sprintf('The image is too large. The limit is %d MB.', intdiv($maxBytes, 1024 * 1024))]);
         }
 
         $info = @getimagesize($file);
@@ -79,16 +107,8 @@ final class ImageStore
         $transparent = $type !== IMAGETYPE_JPEG && self::hasTransparency($image);
         $resized = self::resize($image, $transparent);
 
-        $extension = $transparent ? 'png' : 'jpg';
-        $relative = sprintf(
-            'uploads/%s/%s/%s-%s.%s',
-            self::FOLDERS[$folder],
-            gmdate('Y/m'),
-            self::baseName($originalName),
-            bin2hex(random_bytes(3)),
-            $extension,
-        );
-        $target = $this->publicDir() . '/' . $relative;
+        $relative .= $transparent ? '.png' : '.jpg';
+        $target = $baseDir . '/' . $relative;
         if (!is_dir(dirname($target)) && !mkdir(dirname($target), 0775, true) && !is_dir(dirname($target))) {
             throw new \RuntimeException('Could not create the upload folder ' . dirname($target));
         }
@@ -112,6 +132,17 @@ final class ImageStore
         }
 
         return is_file($this->publicDir() . '/' . $path);
+    }
+
+    /** @return array{width: int, height: int}|null Pixel size of an uploaded image (null when it does not exist). */
+    public function dimensions(string $path): ?array
+    {
+        if (!$this->exists($path)) {
+            return null;
+        }
+        $info = @getimagesize($this->publicDir() . '/' . $path);
+
+        return $info === false ? null : ['width' => (int) $info[0], 'height' => (int) $info[1]];
     }
 
     /** The API's public folder (uploads live in public/uploads). */

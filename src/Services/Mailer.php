@@ -20,8 +20,11 @@ final class Mailer
     {
     }
 
-    /** @param string|list<string> $to */
-    public function send(string|array $to, string $subject, string $html, ?string $replyTo = null): bool
+    /**
+     * @param string|list<string> $to
+     * @param list<array{name: string, content: string, type: string}> $attachments e.g. a proforma invoice PDF
+     */
+    public function send(string|array $to, string $subject, string $html, ?string $replyTo = null, array $attachments = []): bool
     {
         $recipients = array_values(array_filter((array) $to));
         if ($recipients === []) {
@@ -29,7 +32,7 @@ final class Mailer
         }
 
         if ($this->config->string('mail.driver', 'log') === 'log') {
-            return $this->writeToLog($recipients, $subject, $html, $replyTo);
+            return $this->writeToLog($recipients, $subject, $html, $replyTo, $attachments);
         }
         if (!$this->smtpConfigured()) {
             // Never lose a message because of missing settings: keep it in the mail log instead.
@@ -38,7 +41,7 @@ final class Mailer
                 'subject' => $subject,
             ]);
 
-            return $this->writeToLog($recipients, $subject, $html, $replyTo);
+            return $this->writeToLog($recipients, $subject, $html, $replyTo, $attachments);
         }
 
         $mail = new PHPMailer(true);
@@ -61,6 +64,10 @@ final class Mailer
             }
             if ($replyTo !== null && $replyTo !== '') {
                 $mail->addReplyTo($replyTo);
+            }
+
+            foreach ($attachments as $attachment) {
+                $mail->addStringAttachment($attachment['content'], $attachment['name'], PHPMailer::ENCODING_BASE64, $attachment['type']);
             }
 
             $mail->isHTML(true);
@@ -116,20 +123,25 @@ final class Mailer
         return $output;
     }
 
-    /** @param list<string> $recipients */
-    private function writeToLog(array $recipients, string $subject, string $html, ?string $replyTo): bool
+    /**
+     * @param list<string> $recipients
+     * @param list<array{name: string, content: string, type: string}> $attachments
+     */
+    private function writeToLog(array $recipients, string $subject, string $html, ?string $replyTo, array $attachments): bool
     {
         $directory = $this->config->string('paths.storage') . '/logs';
         if (!is_dir($directory)) {
             mkdir($directory, 0775, true);
         }
 
+        $files = array_map(static fn (array $a): string => sprintf('%s (%s, %d bytes)', $a['name'], $a['type'], strlen($a['content'])), $attachments);
         $entry = sprintf(
-            "==== %s ====\nTo: %s\nReply-To: %s\nSubject: %s\n\n%s\n\n",
+            "==== %s ====\nTo: %s\nReply-To: %s\nSubject: %s\n%s\n%s\n\n",
             gmdate('Y-m-d H:i:s \U\T\C'),
             implode(', ', $recipients),
             $replyTo ?? '-',
             $subject,
+            $files === [] ? '' : 'Attachments: ' . implode(', ', $files) . "\n",
             self::toText($html),
         );
 

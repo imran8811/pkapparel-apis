@@ -130,6 +130,9 @@ final class Database
     }
 
     /**
+     * Runs the callback in a transaction. Called inside another transaction, it joins that one,
+     * so the outer caller decides whether everything is committed or rolled back.
+     *
      * @template T
      * @param callable(self): T $callback
      * @return T
@@ -137,6 +140,9 @@ final class Database
     public function transaction(callable $callback): mixed
     {
         $pdo = $this->pdo();
+        if ($pdo->inTransaction()) {
+            return $callback($this);
+        }
         $pdo->beginTransaction();
         try {
             $result = $callback($this);

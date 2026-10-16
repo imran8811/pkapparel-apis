@@ -54,6 +54,19 @@ final class Response
         return new self(204);
     }
 
+    /** A file download (PDF invoices, payment slips). The name may only contain safe characters. */
+    public static function file(string $content, string $contentType, string $filename): self
+    {
+        $safeName = (string) preg_replace('/[^A-Za-z0-9._-]+/', '-', $filename);
+
+        return new self(200, [
+            'Content-Type' => $contentType,
+            'Content-Length' => (string) strlen($content),
+            'Content-Disposition' => 'attachment; filename="' . $safeName . '"',
+            'Cache-Control' => 'private, no-store',
+        ], $content);
+    }
+
     public function withHeader(string $name, string $value): self
     {
         return new self($this->status, [$name => $value] + $this->headers, $this->body);
