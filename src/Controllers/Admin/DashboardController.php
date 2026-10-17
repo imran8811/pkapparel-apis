@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers\Admin;
 
+use App\Core\Format;
 use App\Core\Request;
 use App\Core\Response;
 use App\Models\Certification;
@@ -41,6 +42,7 @@ final class DashboardController extends AdminController
                 'awaiting_deposit' => $counts['awaiting_deposit'] ?? 0,
                 'payments_to_check' => $this->payments->countByStatus('submitted'),
                 'open' => array_sum(array_intersect_key($counts, array_flip(Order::OPEN_STATUSES))),
+                'late' => $this->orders->countLate(Format::local()->format('Y-m-d')),
             ];
         }
 

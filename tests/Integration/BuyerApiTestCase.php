@@ -41,8 +41,15 @@ abstract class BuyerApiTestCase extends IntegrationTestCase
         if ($ids !== []) {
             $idList = implode(', ', $ids);
             $storage = rtrim($this->app->config()->string('paths.storage'), '/\\') . '/private/';
-            foreach ($this->db->fetchAll("SELECT p.slip_path FROM order_payments p JOIN orders o ON o.id = p.order_id WHERE o.customer_id IN ({$idList}) AND p.slip_path IS NOT NULL") as $row) {
-                @unlink($storage . $row['slip_path']);
+            // Private files of the orders: payment slips, staff documents and production photos (with previews).
+            $files = $this->db->fetchAll(
+                "SELECT p.slip_path AS path FROM order_payments p JOIN orders o ON o.id = p.order_id WHERE o.customer_id IN ({$idList}) AND p.slip_path IS NOT NULL
+                 UNION ALL SELECT d.path FROM order_documents d JOIN orders o ON o.id = d.order_id WHERE o.customer_id IN ({$idList})
+                 UNION ALL SELECT f.path FROM order_photos f JOIN orders o ON o.id = f.order_id WHERE o.customer_id IN ({$idList})
+                 UNION ALL SELECT f.preview_path FROM order_photos f JOIN orders o ON o.id = f.order_id WHERE o.customer_id IN ({$idList})",
+            );
+            foreach ($files as $row) {
+                @unlink($storage . $row['path']);
             }
             $this->db->execute("DELETE FROM orders WHERE customer_id IN ({$idList})");
             $this->db->execute("DELETE FROM auth_tokens WHERE user_type = 'customer' AND user_id IN ({$idList})");

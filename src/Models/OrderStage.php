@@ -50,6 +50,27 @@ final class OrderStage
     }
 
     /**
+     * Production is finished: every stage that is not done yet is marked done on this date
+     * (staff do not always record each stage). Returns how many stages changed.
+     */
+    public function completeRemaining(int $orderId, string $date, int $staffId): int
+    {
+        $changed = 0;
+        $saved = $this->forOrder($orderId);
+        foreach (array_keys(self::STAGES) as $stage) {
+            $row = $saved[$stage] ?? ['started_on' => null, 'completed_on' => null, 'note' => null];
+            if ($row['completed_on'] !== null) {
+                continue;
+            }
+            $started = $row['started_on'] ?? $date;
+            $this->save($orderId, $stage, $started, max($started, $date), $row['note'], $staffId);
+            $changed++;
+        }
+
+        return $changed;
+    }
+
+    /**
      * The stages as a list for display, including the ones not started yet.
      *
      * @param array<string, array{started_on: ?string, completed_on: ?string, note: ?string}> $saved

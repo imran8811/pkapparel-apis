@@ -10,6 +10,7 @@ use App\Core\HttpException;
 use App\Core\Logger;
 use App\Core\ValidationException;
 use App\Models\Order;
+use App\Models\OrderStage;
 use App\Models\Shipment;
 use Throwable;
 
@@ -27,6 +28,7 @@ final class OrderWorkflow
     public function __construct(
         private readonly Database $db,
         private readonly Order $orders,
+        private readonly OrderStage $stages,
         private readonly Shipment $shipments,
         private readonly OrderService $service,
         private readonly DocumentNumbers $numbers,
@@ -99,7 +101,8 @@ final class OrderWorkflow
      *
      * @param array<string, mixed> $order
      * @param array{id: int} $staff
-     * @param array<int, int> $addonPrices add-on id => price per unit in cents
+     * @param array<int, int> $addonPrices add-on id => its price for this order in cents (on-request and per-order
+     *                                      add-ons count once; per-piece ones keep the price from checkout)
      */
     public function setCharges(array $order, array $staff, ?int $freightCents, bool $clearFreight, array $addonPrices): void
     {
@@ -110,6 +113,9 @@ final class OrderWorkflow
         foreach (array_keys($addonPrices) as $addonId) {
             if (!isset($addons[$addonId])) {
                 throw new ValidationException(['addons' => 'One of the add-ons does not belong to this order.']);
+            }
+            if ($addons[$addonId]['pricing'] === 'per_piece') {
+                throw new ValidationException(['addons' => "{$addons[$addonId]['name']} is priced per piece at checkout."]);
             }
         }
 
@@ -124,7 +130,7 @@ final class OrderWorkflow
             }
             foreach ($addonPrices as $addonId => $cents) {
                 $this->orders->priceAddon($order['id'], $addonId, $cents);
-                $notes[] = sprintf('%s priced at %s each', $addons[$addonId]['name'], Format::money($cents));
+                $notes[] = sprintf('%s priced at %s', $addons[$addonId]['name'], Format::money($cents));
             }
             if ($notes !== []) {
                 $this->orders->addEvent($order['id'], 'charges', null, null, implode('. ', $notes), 'staff', $staff['id']);
@@ -134,6 +140,7 @@ final class OrderWorkflow
 
     /**
      * Production is done: issue the balance invoice (INV-2026-00001) and email it to the buyer.
+     * Stages staff did not mark as done are marked done today.
      *
      * @param array<string, mixed> $order
      * @param array{id: int} $staff
@@ -155,6 +162,7 @@ final class OrderWorkflow
                 $extra['freight_final_cents'] = $order['freight_estimate_cents'];
             }
             $this->change($order, 'ready_to_ship', $staff, null, $extra);
+            $this->stages->completeRemaining($order['id'], Format::local()->format('Y-m-d'), $staff['id']);
         });
 
         $this->notify($order['id'], function (array $view): void {

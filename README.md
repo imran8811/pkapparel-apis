@@ -1,7 +1,7 @@
 # PK Apparel API
 
 The REST API behind pkapparel.com: plain PHP 8.2+ (no framework) on MySQL.
-It holds everything the website shows or saves: site settings, marketing content, the blog, the wholesale catalog, inquiries, buyer accounts, carts, orders, payment reports and staff accounts.
+It holds everything the website shows or saves: site settings, marketing content, the blog, the wholesale catalog, inquiries, buyer accounts, carts, orders with their payments, production and shipping, and staff accounts.
 
 **Only the website talks to it.** The Next.js website (the separate `web` repository) calls it from its server.
 Every request needs the shared `X-Client-Key`. Buyer account routes also need a buyer login token, and admin routes a staff login token. Browsers never call this API directly.
@@ -34,6 +34,7 @@ All of these run from this folder.
 | Apply new database migrations | `php bin/migrate.php` |
 | Run the tests | `composer test` (unit and integration tests; the integration tests use the local database) |
 | Admin accounts | `php bin/create-staff.php` (see [Staff accounts](#staff-accounts)) |
+| Daily order emails and clean-up | `php bin/daily.php`, once a day from cron (see [Daily job](#daily-job-cron)) |
 | Send a test email | `php bin/send-test-email.php you@example.com` |
 | Refresh the website's cache | `php bin/revalidate.php <tag> …` (see the tags below) |
 | Import the old blog posts | `php bin/import-legacy-posts.php` |
@@ -50,7 +51,7 @@ They read the old site's files and database, set in `LEGACY_*` in `.env`, and ne
 
 ## Staff accounts
 
-Staff log in to the website's admin panel at `/admin`. Accounts are managed here:
+Staff log in to the website's admin panel at `/admin`. Admins manage accounts there (*Staff accounts*: add, change role, switch off, new password). The first admin account is created here:
 
 ```
 php bin/create-staff.php --name="Your Name" --email=you@example.com --role=admin
@@ -63,10 +64,10 @@ php bin/create-staff.php --name="Your Name" --email=you@example.com --role=admin
 
 | Role | Can use |
 |---|---|
-| `admin` | everything, including company settings and the bank details |
+| `admin` | everything: the only role that confirms, rejects or records payments; company settings, bank details and staff accounts |
 | `editor` | website content: blog, pages, FAQs, reviews, certificates, factory, shop styles, size charts and shop category texts |
-| `sales` | orders, customers, inquiries, shipping rates and add-ons |
-| `production` | orders (read); production updates come with Phase 4 |
+| `sales` | orders (every step except payments), the payment queue (read only), customers, inquiries, shipping rates and add-ons |
+| `production` | orders: production stages, photos and notes |
 
 ## How it is built
 
@@ -94,9 +95,24 @@ php bin/create-staff.php --name="Your Name" --email=you@example.com --role=admin
   - Placing an order freezes copies of the lines, prices, buyer and address, empties the cart and emails the buyer the **proforma invoice** (PDF), with the bank details, and staff a summary.
   - Order numbers look like `PK-261016-482` (Pakistan date plus a random code).
   - The deposit (`commerce.deposit_percent`, 50%) covers the goods and priced add-ons. Freight is an estimate until staff confirm it and is paid with the balance, together with "price on request" add-ons.
-- **Payment reports:** the buyer reports each transfer (transaction ID, amount, date, sender, optional slip). A transaction ID can be used only once. Staff review them in Phase 4.
+- **Payment reports:** the buyer reports each transfer (transaction ID, amount, date, sender, optional slip). A transaction ID can be used only once (until the payment is rejected).
 - **Bank details** are the private `bank` setting: never in `/v1/site`, and only shown to the buyer of an order with an amount due.
-- **PDFs** are made with dompdf from `templates/pdf/` (DejaVu Sans; the logo is `templates/pdf/logo.png`). Its font cache lives in `storage/cache/dompdf`.
+- **PDFs** are made with dompdf from `templates/pdf/` (DejaVu Sans; the logo is `templates/pdf/logo.png`): the proforma invoice, the balance invoice and receipts. They are made when needed from the order's current figures, not stored. The font cache lives in `storage/cache/dompdf`.
+
+### Order management (`/v1/admin/orders/*`, `/v1/admin/payments`)
+
+- **Payments** (`App\Services\PaymentReview`, admins only):
+  - Confirming records the amount that arrived, gives a receipt number (`RCPT-2026-00001`) and emails the buyer the receipt PDF.
+  - A confirmed deposit makes the order **Confirmed** and sets the production due date (today plus the lead time). A short deposit waits unless the admin starts production anyway.
+  - Rejecting emails the buyer the reason and frees the transaction ID. Staff can also record a transfer the buyer did not report.
+- **Workflow** (`App\Services\OrderWorkflow`): hold and resume, cancel, a new due date, the final freight and prices for "on request" add-ons (one total per order), ready to ship, shipped, delivered, internal notes.
+  - **Ready to ship** issues the balance invoice (`INV-2026-00001`) and emails it. It needs the freight (the estimate is used if none was entered) and every add-on priced, and marks unfinished production stages done.
+  - **Shipping** needs the full payment, or a reason that is kept in the history.
+- **Production** (`App\Services\Production`): seven stages with start and done dates and a note, and photos with a preview copy. Starting the first stage moves the order to *In production*. Updates can email the buyer.
+- **Documents** (`App\Services\OrderDocuments`): staff upload the commercial invoice, packing list, B/L or AWB, QC report and other files (PDF or photo), each shared with the buyer or kept for staff.
+- **Receipt and invoice numbers** count up per year in `document_sequences`.
+- **Every step** is written to the order history (`order_events`) with who did it. The buyer sees only the steps meant for them.
+- **Times:** due dates and "late" use the Pakistan date (`Asia/Karachi`).
 
 | Folder | What it contains |
 |---|---|
@@ -105,10 +121,10 @@ php bin/create-staff.php --name="Your Name" --email=you@example.com --role=admin
 | `routes/api.php` | every route |
 | `config/app.php` | settings, read from `.env` |
 | `database/migrations/` | numbered SQL files |
-| `templates/` | email templates (`email/`) and the proforma invoice (`pdf/`) |
+| `templates/` | email templates (`email/`) and the PDFs (`pdf/`: proforma and balance invoice, receipt) |
 | `bin/` | command-line scripts |
 | `tests/` | PHPUnit tests |
-| `storage/` | logs, cache and private files (`private/payment-slips`); must be writable and must not be web-accessible |
+| `storage/` | logs, cache and private files (`private/payment-slips`, `private/documents`, `private/production`); must be writable and must not be web-accessible |
 
 ## Configuration (`.env`)
 
@@ -127,8 +143,11 @@ To make a secret: `php -r "echo bin2hex(random_bytes(32));"`
 
 - **In development,** use `MAIL_DRIVER=log`. Emails are then written to `storage/logs/mail-YYYY-MM-DD.log` instead of being sent (attachments are listed by name and size).
 - **For real sending,** use `MAIL_DRIVER=smtp` with `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` and `MAIL_ENCRYPTION`.
-- **Staff notifications** (inquiries, new orders, payment reports, cancellations) go to `MAIL_ADMIN_TO`.
-- **Emails to buyers:** inquiry replies, "confirm your email", password reset, order placed (with the proforma invoice attached), payment details received.
+- **Staff notifications** (inquiries, new orders, payment reports, cancellations, the daily summary) go to `MAIL_ADMIN_TO`.
+- **Emails to buyers:**
+  - accounts and inquiries: inquiry replies, "confirm your email", password reset
+  - orders: order placed (proforma invoice attached), payment details received, payment confirmed (receipt attached) or rejected, production updates, on hold, resumed, new ready date, cancelled, ready to ship (balance invoice attached), shipped, delivered
+  - from the daily job: payment reminders and the automatic cancellation
 - **Links in emails** point to `WEB_URL`, so set it to the live website address in production.
 
 **Gmail (pkapparel2@gmail.com):**
@@ -138,6 +157,21 @@ To make a secret: `php -r "echo bin2hex(random_bytes(32));"`
 4. Check it with `php bin/send-test-email.php you@example.com`.
 
 Until the password is filled in, emails go to the log file and a warning is logged.
+
+## Daily job (cron)
+
+`php bin/daily.php` does the daily order chores:
+- reminds buyers whose deposit has not arrived, 3 and 7 days after the order
+- cancels orders still unpaid after 30 days, and tells the buyer
+- emails staff a summary: payments to check, late orders, orders due within 3 days, and what the job did (nothing is sent when there is nothing to report)
+
+Run it once a day with a cron job (in cPanel: *Cron Jobs*), using the server's PHP 8.2+ command and the path to this folder, for example:
+
+```
+0 2 * * * php /home/<account>/<api folder>/bin/daily.php
+```
+
+The time is in the server's time zone: 02:00 UTC is 07:00 in Lahore. Running it again on the same day sends nothing twice. It prints one line, such as `reminders sent: 0, orders cancelled: 0, staff summary: sent`.
 
 ## Uploaded files
 
@@ -155,7 +189,12 @@ The database stores relative paths such as `uploads/products/2026/10/….jpg`.
 
 `public/uploads/.htaccess` stops anything in that folder from running as code. The website serves these files on its own domain by proxying `/uploads/*` to this API.
 
-**Payment slips are private** (`App\Services\PaymentSlips`): they are stored in `storage/private/payment-slips`, never in `public/uploads`, and only staff can download them through the admin. Photos are re-encoded like other uploads; PDFs are checked by their signature. The limit is 4 MB, because the website's host accepts at most 4.5 MB per request.
+**Order files are private** (`App\Services\PrivateFiles`), stored in `storage/private`, never in `public/uploads`:
+- `payment-slips/`: transfer slips; only staff can download them.
+- `documents/`: files staff attach to an order; the buyer can download the ones shared with them.
+- `production/`: production photos, each with a small preview copy; staff and the buyer of that order can see them.
+
+Photos are re-encoded like other uploads; PDFs are checked by their signature. The limit is 4 MB, because the website's host accepts at most 4.5 MB per request. The website streams these files through its own routes, checking the login.
 
 ## Local XAMPP setup
 

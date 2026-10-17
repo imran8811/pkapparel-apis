@@ -149,23 +149,36 @@ final class OrderManagementTest extends OrderTestCase
     public function testReadyToShipIssuesTheBalanceInvoiceAndShippingNeedsFullPayment(): void
     {
         $onRequest = $this->app->container->get(\App\Models\CustomizationOption::class)->create(['name' => 'TEST hang tags', 'pricing' => 'on_request', 'is_active' => true]);
-        [$buyer, $orderNo, $orderId] = $this->confirmedOrder('sea', [$onRequest]);
+        [$buyer, $orderNo, $orderId] = $this->confirmedOrder('sea', [$onRequest, $this->addonId]);
         $sales = $this->staffLogin('sales');
+        $today = Format::local()->format('Y-m-d');
+        $twoDaysAgo = Format::local()->modify('-2 days')->format('Y-m-d');
+        self::assertSame(204, $this->send('PUT', "/v1/admin/orders/{$orderId}/stages/cutting", ['action' => 'start', 'date' => $twoDaysAgo], $sales)->status());
 
         $unpriced = $this->send('POST', "/v1/admin/orders/{$orderId}/ready-to-ship", null, $sales);
         self::assertSame('addons_unpriced', $unpriced->decoded()['error']['code']);
-        $addonId = $this->send('GET', "/v1/admin/orders/{$orderId}", null, $sales)->decoded()['data']['addons'][0]['id'];
+        $addonIds = array_column($this->send('GET', "/v1/admin/orders/{$orderId}", null, $sales)->decoded()['data']['addons'], 'id', 'pricing');
+        // Per-piece add-ons keep their checkout price ($0.12 × 120 pcs).
+        $perPiece = $this->send('PUT', "/v1/admin/orders/{$orderId}/charges", ['addons' => [$addonIds['per_piece'] => 99]], $sales);
+        self::assertSame(422, $perPiece->status());
+        self::assertSame('TEST labels is priced per piece at checkout.', $perPiece->decoded()['error']['fields']['addons']);
         // "On request" add-ons are priced as a total for the order.
-        $charged = $this->send('PUT', "/v1/admin/orders/{$orderId}/charges", ['freight_cents' => 15000, 'addons' => [$addonId => 1200]], $sales)->decoded()['data'];
+        $charged = $this->send('PUT', "/v1/admin/orders/{$orderId}/charges", ['freight_cents' => 15000, 'addons' => [$addonIds['on_request'] => 1200]], $sales)->decoded()['data'];
         self::assertSame(15000, $charged['amounts']['freight_cents']);
         self::assertSame('final', $charged['amounts']['freight_status']);
-        self::assertSame(1200, $charged['amounts']['addons_cents']);
+        self::assertSame(1440 + 1200, $charged['amounts']['addons_cents']);
+        self::assertSame('Final freight $150.00. TEST hang tags priced at $12.00', $charged['events'][array_key_last($charged['events'])]['note']);
 
         $ready = $this->send('POST', "/v1/admin/orders/{$orderId}/ready-to-ship", null, $sales)->decoded()['data'];
         self::assertSame('ready_to_ship', $ready['status']);
         self::assertMatchesRegularExpression('/^INV-\d{4}-\d{5}$/', (string) $ready['balance_invoice_no']);
-        // Total $510 + $12 + $150 = $672; deposit $255 paid → balance $417.
-        self::assertSame(41700, $ready['amounts']['due_now_cents']);
+        // Total $510 + $14.40 + $12 + $150 = $686.40; the deposit, 50% of $524.40 = $262.20, is paid → balance $424.20.
+        self::assertSame(42420, $ready['amounts']['due_now_cents']);
+        // Production is finished: the stages staff did not mark as done are done today; recorded start dates stay.
+        self::assertSame(['done'], array_values(array_unique(array_column($ready['stages'], 'status'))));
+        $stages = array_column($ready['stages'], null, 'key');
+        self::assertSame([$twoDaysAgo, $today], [$stages['cutting']['started_on'], $stages['cutting']['completed_on']]);
+        self::assertSame([$today, $today], [$stages['packing']['started_on'], $stages['packing']['completed_on']]);
         self::assertStringContainsString("Your order {$orderNo} is ready to ship", $this->mailLog());
         self::assertStringContainsString("Attachments: {$ready['balance_invoice_no']}.pdf", $this->mailLog());
         self::assertStringStartsWith('%PDF-', $this->send('GET', "/v1/account/orders/{$orderNo}/invoice", null, $buyer)->body());
@@ -174,8 +187,8 @@ final class OrderManagementTest extends OrderTestCase
         $unpaid = $this->send('POST', "/v1/admin/orders/{$orderId}/ship", $shipment, $sales);
         self::assertSame('not_paid', $unpaid->decoded()['error']['code']);
 
-        $balanceId = $this->reportPayment($buyer, $orderNo, 41700, 'TX-BALANCE-1');
-        $paid = $this->send('POST', "/v1/admin/payments/{$balanceId}/confirm", ['received_cents' => 41700, 'received_on' => gmdate('Y-m-d')], $this->staffLogin('admin'))->decoded()['data'];
+        $balanceId = $this->reportPayment($buyer, $orderNo, 42420, 'TX-BALANCE-1');
+        $paid = $this->send('POST', "/v1/admin/payments/{$balanceId}/confirm", ['received_cents' => 42420, 'received_on' => gmdate('Y-m-d')], $this->staffLogin('admin'))->decoded()['data'];
         self::assertSame('Ready to ship, paid', $paid['status_label']);
         self::assertStringContainsString('Your order is now paid in full', $this->mailLog());
 

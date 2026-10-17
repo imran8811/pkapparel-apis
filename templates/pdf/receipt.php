@@ -1,6 +1,6 @@
 <?php
 /**
- * Payment receipt (A5 landscape-like, on A4), emailed when an admin confirms a payment.
+ * Payment receipt (A4), emailed automatically when an admin confirms a payment.
  * Variables: $order (presented order), $payment (presented payment, staff view), $company, $contact, $addresses, $logo, $e.
  */
 

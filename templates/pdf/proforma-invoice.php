@@ -233,12 +233,18 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
 <h2 style="margin-top: 14px;">Terms</h2>
 <ul class="terms" style="margin: 0; padding-left: 14px;">
   <li>Prices are per piece in US dollars. Every order is made to order; production starts when the deposit is confirmed.</li>
-  <li><?= $amounts['freight_status'] === 'none'
-      ? 'The buyer books the freight; we hand the goods to the buyer\'s forwarder in Pakistan.'
-      : 'The freight is an estimate until confirmed. The final freight is invoiced with the balance. Import duties and taxes are paid by the buyer.' ?></li>
+  <li><?= match ($amounts['freight_status']) {
+      'none' => 'The buyer books the freight; we hand the goods to the buyer\'s forwarder in Pakistan.',
+      'final' => 'The freight shown is final. Import duties and taxes are paid by the buyer.',
+      default => 'The freight is an estimate until confirmed. The final freight is invoiced with the balance. Import duties and taxes are paid by the buyer.',
+  } ?></li>
   <?php if ($amounts['has_quoted_addons']): ?><li>Add-ons marked "On request" are quoted separately and invoiced with the balance.</li><?php endif; ?>
-  <li>Ready dates are estimates and may change with approvals, fabric availability or holidays. Goods ship after the full amount is received.</li>
-  <li>Changes and cancellations are possible until the fabric is cut. Our terms of sale apply (pkapparel.com/terms-of-sale).</li>
+  <?php if ($isBalance): ?>
+    <li>Goods ship after the full amount is received. Our terms of sale apply (pkapparel.com/terms-of-sale).</li>
+  <?php else: ?>
+    <li>Ready dates are estimates and may change with approvals, fabric availability or holidays. Goods ship after the full amount is received.</li>
+    <li>Changes and cancellations are possible until the fabric is cut. Our terms of sale apply (pkapparel.com/terms-of-sale).</li>
+  <?php endif; ?>
 </ul>
 </body>
 </html>
