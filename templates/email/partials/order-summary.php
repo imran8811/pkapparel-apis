@@ -28,11 +28,11 @@ $num = $cell . 'text-align:right;white-space:nowrap;';
     </tr>
   <?php endforeach; ?>
   <tr>
-    <td style="<?= $cell ?>" colspan="2">Goods<?= $amounts['addons_cents'] > 0 ? ' and add-ons' : '' ?> (<?= (int) $order['total_pcs'] ?> pcs)</td>
+    <td style="<?= $cell ?>" colspan="2"><?= ($order['kind'] ?? 'bulk') === 'sample' ? 'Samples' : 'Goods' ?><?= $amounts['addons_cents'] > 0 ? ' and add-ons' : '' ?> (<?= (int) $order['total_pcs'] ?> pcs)</td>
     <td style="<?= $num ?>"><?= $e(Format::money($amounts['goods_cents'] + $amounts['addons_cents'])) ?></td>
   </tr>
   <tr>
-    <td style="<?= $cell ?>" colspan="2">Freight, <?= $e(strtolower($order['shipping_mode_label'])) ?></td>
+    <td style="<?= $cell ?>" colspan="2"><?= ($order['kind'] ?? 'bulk') === 'sample' ? 'Courier' : 'Freight, ' . $e(strtolower($order['shipping_mode_label'])) ?></td>
     <td style="<?= $num ?>"><?php
         echo match ($amounts['freight_status']) {
             'none' => 'Booked by you',
@@ -46,12 +46,23 @@ $num = $cell . 'text-align:right;white-space:nowrap;';
     <td style="padding:10px 0 4px;font-size:15px;" colspan="2"><strong>Total</strong></td>
     <td style="padding:10px 0 4px;font-size:15px;text-align:right;white-space:nowrap;"><strong><?= $e(Format::money($amounts['total_cents'])) ?></strong></td>
   </tr>
-  <tr>
-    <td style="padding:2px 0;font-size:13px;color:#5c6170;" colspan="2"><?= (int) $amounts['deposit_percent'] ?>% deposit, to start production</td>
-    <td style="padding:2px 0;font-size:13px;color:#5c6170;text-align:right;white-space:nowrap;"><?= $e(Format::money($amounts['deposit_cents'])) ?></td>
-  </tr>
-  <tr>
-    <td style="padding:2px 0;font-size:13px;color:#5c6170;" colspan="2">Balance, before shipment<?= $amounts['freight_status'] === 'estimate' || $amounts['freight_status'] === 'quoted' ? ', with the final freight' : '' ?></td>
-    <td style="padding:2px 0;font-size:13px;color:#5c6170;text-align:right;white-space:nowrap;"><?= $e(Format::money($amounts['balance_cents'])) ?></td>
-  </tr>
+  <?php if (($order['kind'] ?? 'bulk') === 'sample'): ?>
+    <tr>
+      <td style="padding:2px 0;font-size:13px;color:#5c6170;" colspan="3">Paid in full before dispatch, by bank transfer</td>
+    </tr>
+  <?php else: ?>
+    <tr>
+      <td style="padding:2px 0;font-size:13px;color:#5c6170;" colspan="2"><?= (int) $amounts['deposit_percent'] ?>% deposit, to start production</td>
+      <td style="padding:2px 0;font-size:13px;color:#5c6170;text-align:right;white-space:nowrap;"><?= $e(Format::money($amounts['deposit_cents'])) ?></td>
+    </tr>
+    <tr>
+      <td style="padding:2px 0;font-size:13px;color:#5c6170;" colspan="2">Balance, before shipment<?= $amounts['freight_status'] === 'estimate' || $amounts['freight_status'] === 'quoted' ? ', with the final freight' : '' ?></td>
+      <td style="padding:2px 0;font-size:13px;color:#5c6170;text-align:right;white-space:nowrap;"><?= $e(Format::money($amounts['balance_cents'])) ?></td>
+    </tr>
+    <?php if (($order['pending_credit_cents'] ?? 0) > 0): ?>
+      <tr>
+        <td style="padding:6px 0 2px;font-size:13px;color:#0f6b46;" colspan="3">The cost of your samples (<?= $e(Format::money($order['pending_credit_cents'])) ?>) is deducted from the balance once the order is confirmed.</td>
+      </tr>
+    <?php endif; ?>
+  <?php endif; ?>
 </table>

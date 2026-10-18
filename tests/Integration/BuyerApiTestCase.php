@@ -90,14 +90,16 @@ abstract class BuyerApiTestCase extends IntegrationTestCase
      * @param array<string, mixed> $fields
      * @param array<string, array<string, mixed>> $files
      */
-    protected function sendForm(string $path, array $fields, array $files, string $token): Response
+    protected function sendForm(string $path, array $fields, array $files, ?string $token): Response
     {
         $headers = [
             'x-client-key' => $this->app->config()->string('client_key'),
             'x-client-ip' => $this->testIp(),
-            'authorization' => 'Bearer ' . $token,
             'content-type' => 'multipart/form-data; boundary=test',
         ];
+        if ($token !== null) {
+            $headers['authorization'] = 'Bearer ' . $token;
+        }
 
         return $this->app->handle(new Request('POST', $path, [], $headers, '', $fields, $files));
     }

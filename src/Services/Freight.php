@@ -18,6 +18,8 @@ use App\Models\ShippingZone;
  * Rates come in bands ("from 100 kg: $3.80/kg"). As with airline weight breaks, a shipment
  * pays the cheapest band, counting at least the band's starting quantity.
  * Estimates only: the final freight is confirmed before the balance is paid.
+ *
+ * Samples go by courier, priced per piece: a fixed amount plus a price per piece (bands by pieces).
  */
 final class Freight
 {
@@ -74,6 +76,23 @@ final class Freight
             'sea' => self::sea($packing, $forMode('sea'), $this->commerce->fclFromCbm()),
             'forwarder' => ['cost_cents' => 0, 'quoted' => false, 'reason' => null, 'transit_min_days' => null, 'transit_max_days' => null, 'basis' => null],
         ];
+    }
+
+    /**
+     * Courier cost of a sample order to a country; quoted (cost_cents null) when the zone has no courier rate.
+     *
+     * @return array{cost_cents: ?int, quoted: bool, reason: ?string, transit_min_days: ?int, transit_max_days: ?int, basis: ?string}
+     */
+    public function courier(?string $countryCode, int $pieces): array
+    {
+        $zone = $countryCode === null ? null : $this->zones->forCountry($countryCode);
+        $rates = array_values(array_filter($zone['rates'] ?? [], static fn (array $r): bool => $r['mode'] === 'courier'));
+        $best = self::cheapestBand($rates, (float) max(1, $pieces));
+        if ($best === null) {
+            return self::quoted('no_rate', $rates);
+        }
+
+        return self::estimate($best, sprintf('%d %s', $pieces, $pieces === 1 ? 'piece' : 'pieces'));
     }
 
     /**

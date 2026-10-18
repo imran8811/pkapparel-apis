@@ -45,6 +45,9 @@ final class Production
         if (!isset(OrderStage::STAGES[$stage])) {
             throw HttpException::notFound('Unknown production stage.');
         }
+        if ($order['kind'] === 'sample') {
+            throw new HttpException(409, 'wrong_kind', 'Sample orders have no production stages.');
+        }
         if (!in_array($order['status'], self::WORKING, true)) {
             throw new HttpException(409, 'wrong_status', 'Production can be updated once the deposit is confirmed.');
         }

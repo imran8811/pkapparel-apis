@@ -16,6 +16,8 @@ final class OrderDocument
         'awb' => 'Air waybill (AWB)',
         'qc_report' => 'QC report',
         'other' => 'Other document',
+        // Uploaded by the buyer with a custom-design sample order.
+        'design' => 'Your design file',
     ];
 
     public function __construct(private readonly Database $db)

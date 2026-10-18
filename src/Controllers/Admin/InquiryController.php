@@ -9,12 +9,17 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Validator;
 use App\Models\Inquiry;
+use App\Models\InquiryFile;
+use App\Services\InquiryAttachments;
 
 /** Website inquiries as a sales pipeline (admin and sales). */
 final class InquiryController extends AdminController
 {
-    public function __construct(private readonly Inquiry $inquiries)
-    {
+    public function __construct(
+        private readonly Inquiry $inquiries,
+        private readonly InquiryFile $files,
+        private readonly InquiryAttachments $attachments,
+    ) {
     }
 
     /** GET /v1/admin/inquiries?status=open|new|…&type=quote&q=…&page=1 */
@@ -61,9 +66,27 @@ final class InquiryController extends AdminController
         return Response::data($this->findOrFail($id));
     }
 
-    /** @return array<string, mixed> */
+    /** GET /v1/admin/inquiry-files/{id}: a file the sender attached. */
+    public function file(Request $request): Response
+    {
+        $this->authorize($request, 'sales');
+        $file = $this->files->find($this->id($request));
+        $content = $file === null || $file['inquiry_id'] === null ? null : $this->attachments->content($file);
+        if ($file === null || $content === null) {
+            throw HttpException::notFound('This file is missing.');
+        }
+
+        return Response::file($content, $file['mime'], $file['name']);
+    }
+
+    /** @return array<string, mixed> the inquiry with its attached files */
     private function findOrFail(int $id): array
     {
-        return $this->inquiries->find($id) ?? throw HttpException::notFound('This inquiry does not exist.');
+        $inquiry = $this->inquiries->find($id) ?? throw HttpException::notFound('This inquiry does not exist.');
+
+        return $inquiry + ['files' => array_map(
+            static fn (array $file): array => ['id' => $file['id'], 'name' => $file['name'], 'mime' => $file['mime'], 'size_bytes' => $file['size_bytes']],
+            $this->files->forInquiry($id),
+        )];
     }
 }

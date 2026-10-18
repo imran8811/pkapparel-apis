@@ -1,7 +1,7 @@
 <?php
 /**
  * Staff notification for a new inquiry.
- * Variables: $inquiry (array), $typeLabel (string), $reference (string), $e (escaper).
+ * Variables: $inquiry (array), $files (attached uploads), $typeLabel (string), $reference (string), $adminUrl (string), $e (escaper).
  */
 $rows = [
     'Reference' => $reference,
@@ -30,3 +30,15 @@ foreach (($inquiry['details'] ?? []) as $label => $value) {
 </table>
 <h2 style="margin:24px 0 8px;font-size:16px;">Message</h2>
 <p style="margin:0;white-space:pre-line;"><?= $e($inquiry['message']) ?></p>
+<?php if ($files !== []): ?>
+<h2 style="margin:24px 0 8px;font-size:16px;">Attached files</h2>
+<ul style="margin:0;padding-left:18px;font-size:14px;">
+  <?php foreach ($files as $file): ?>
+    <li style="margin:0 0 4px;"><?= $e($file['name']) ?> <span style="color:#5c6170;">(<?= $e(number_format(max(1, $file['size_bytes'] / 1024))) ?> KB)</span></li>
+  <?php endforeach; ?>
+</ul>
+<p style="margin:8px 0 0;color:#5c6170;font-size:13px;">Download them from the inquiry in the admin.</p>
+<?php endif; ?>
+<p style="margin:24px 0 0;">
+  <a href="<?= $e($adminUrl) ?>" style="display:inline-block;background:#0b1430;color:#ffffff;text-decoration:none;font-weight:bold;padding:11px 20px;border-radius:999px;">Open in the admin</a>
+</p>

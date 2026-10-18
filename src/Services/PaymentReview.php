@@ -19,7 +19,8 @@ use Throwable;
  *
  * - Confirming gives the payment a receipt number (RCPT-2026-00001), adds what actually arrived to the
  *   order, emails the buyer a PDF receipt, and starts production once the deposit is covered (or when
- *   the admin says so, e.g. when bank fees made it a little short).
+ *   the admin says so, e.g. when bank fees made it a little short). A bulk order confirmed this way gets
+ *   the buyer's paid samples deducted from its balance.
  * - Rejecting frees the transaction ID and tells the buyer why.
  */
 final class PaymentReview
@@ -29,6 +30,7 @@ final class PaymentReview
         private readonly Order $orders,
         private readonly OrderPayment $payments,
         private readonly OrderService $service,
+        private readonly SampleOrders $samples,
         private readonly DocumentNumbers $numbers,
         private readonly OrderPdfs $pdfs,
         private readonly OrderMailer $mailer,
@@ -52,39 +54,43 @@ final class PaymentReview
                 throw new HttpException(409, 'already_reviewed', 'This payment was already reviewed. Reload the page.');
             }
             $this->orders->addPaid($orderId, $receivedCents);
+            $order = (array) $this->orders->find($orderId);
+            $sample = $order['kind'] === 'sample';
             $this->orders->addEvent(
                 $orderId,
                 'payment_confirmed',
                 null,
                 null,
-                sprintf('%s of %s received (receipt %s)', OrderPayment::KINDS[$payment['kind']] ?? 'Payment', Format::money($receivedCents), $receiptNo),
+                sprintf('%s of %s received (receipt %s)', $sample ? 'Payment' : (OrderPayment::KINDS[$payment['kind']] ?? 'Payment'), Format::money($receivedCents), $receiptNo),
                 'staff',
                 $staff['id'],
             );
 
-            $order = (array) $this->orders->find($orderId);
             if ($payment['kind'] !== 'deposit' || !in_array($order['status'], ['awaiting_deposit', 'payment_review'], true)) {
                 return;
             }
             if ($order['paid_cents'] >= $order['deposit_cents'] || $startAnyway) {
                 $due = Format::local()->modify('+' . $order['lead_time_days'] . ' days')->format('Y-m-d');
+                $short = $order['paid_cents'] < $order['deposit_cents'];
                 $this->orders->changeStatus(
                     $orderId,
                     $order['status'],
                     'confirmed',
                     'staff',
                     $staff['id'],
-                    $order['paid_cents'] < $order['deposit_cents'] ? 'Production started before the full deposit arrived' : null,
+                    $short ? ($sample ? 'Samples started before the full payment arrived' : 'Production started before the full deposit arrived') : null,
                     ['confirmed_at' => gmdate('Y-m-d H:i:s'), 'production_due_on' => $due],
                 );
                 $productionStarted = true;
+                // The buyer's first confirmed bulk order: their paid samples are deducted from its balance.
+                $this->samples->creditTo($order, $staff['id']);
             } elseif ($order['status'] === 'payment_review' && $this->payments->countPending($orderId) === 0) {
-                $this->orders->changeStatus($orderId, 'payment_review', 'awaiting_deposit', 'staff', $staff['id'], 'Part of the deposit received');
+                $this->orders->changeStatus($orderId, 'payment_review', 'awaiting_deposit', 'staff', $staff['id'], $sample ? 'Part of the payment received' : 'Part of the deposit received');
             }
         });
 
         $order = (array) $this->orders->find($orderId);
-        $confirmed = OrderService::presentPayment((array) $this->payments->find($paymentId), true);
+        $confirmed = OrderService::presentPayment((array) $this->payments->find($paymentId), true, (string) $order['kind']);
         try {
             $buyerView = $this->service->present($order, false);
             $this->mailer->paymentConfirmed($buyerView, $confirmed, $this->pdfs->receipt($buyerView, $confirmed), $productionStarted);
@@ -126,7 +132,7 @@ final class PaymentReview
 
         $order = (array) $this->orders->find($orderId);
         try {
-            $this->mailer->paymentRejected($this->service->present($order, false), OrderService::presentPayment((array) $this->payments->find($paymentId), true));
+            $this->mailer->paymentRejected($this->service->present($order, false), OrderService::presentPayment((array) $this->payments->find($paymentId), true, (string) $order['kind']));
         } catch (Throwable $e) {
             $this->logger->error('Rejection email could not be sent', ['order' => $order['order_no'], 'error' => $e->getMessage()]);
         }

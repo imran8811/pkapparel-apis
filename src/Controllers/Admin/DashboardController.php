@@ -11,9 +11,11 @@ use App\Models\Certification;
 use App\Models\Customer;
 use App\Models\Faq;
 use App\Models\Inquiry;
+use App\Models\MissingPage;
 use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\Post;
+use App\Models\Review;
 use App\Models\Testimonial;
 
 /** GET /v1/admin/dashboard: what needs attention, tailored to the staff member's role. */
@@ -28,6 +30,8 @@ final class DashboardController extends AdminController
         private readonly Order $orders,
         private readonly OrderPayment $payments,
         private readonly Customer $customers,
+        private readonly Review $reviews,
+        private readonly MissingPage $missingPages,
     ) {
     }
 
@@ -39,6 +43,7 @@ final class DashboardController extends AdminController
         if (in_array($role, ['admin', 'sales', 'production'], true)) {
             $counts = $this->orders->countByStatus();
             $data['orders'] = [
+                'samples_to_price' => $counts['awaiting_price'] ?? 0,
                 'awaiting_deposit' => $counts['awaiting_deposit'] ?? 0,
                 'payments_to_check' => $this->payments->countByStatus('submitted'),
                 'open' => array_sum(array_intersect_key($counts, array_flip(Order::OPEN_STATUSES))),
@@ -59,6 +64,9 @@ final class DashboardController extends AdminController
 
         if (in_array($role, ['admin', 'editor'], true)) {
             $data['content'] = [
+                'reviews_to_approve' => $this->reviews->counts()['pending'],
+                // Addresses visitors hit that do not exist (Admin → Redirects).
+                'missing_pages' => $this->missingPages->counts()['open'],
                 'posts' => $this->posts->counts(),
                 'faqs' => $this->faqs->count(),
                 'testimonials' => $this->testimonials->count(),

@@ -100,7 +100,7 @@ final class ShippingController extends AdminController
             $row = Validator::make(is_array($input) ? $input : [], [
                 'mode' => 'required|in:' . implode(',', ShippingZone::MODES),
                 'from_qty' => 'required|numeric|min:0|max:100000',
-                'rate_cents' => 'required|int|min:1|max:10000000',
+                'rate_cents' => 'required|int|min:0|max:10000000',
                 'fixed_cents' => 'nullable|int|min:0|max:100000000',
                 'transit_min_days' => 'nullable|int|min:1|max:365',
                 'transit_max_days' => 'nullable|int|min:1|max:365',
@@ -110,6 +110,12 @@ final class ShippingController extends AdminController
                 throw new ValidationException(["rates.{$index}" => sprintf('Rate %d: %s', $index + 1, reset($errors))]);
             }
             $rate = $row->validate();
+            if ($rate['rate_cents'] === 0 && (int) ($rate['fixed_cents'] ?? 0) === 0) {
+                throw new ValidationException(["rates.{$index}" => sprintf('Rate %d: enter a rate or a fixed charge.', $index + 1)]);
+            }
+            if ($rate['mode'] === 'courier' && floor((float) $rate['from_qty']) !== (float) $rate['from_qty']) {
+                throw new ValidationException(["rates.{$index}" => sprintf('Rate %d: courier rates start at a whole number of pieces.', $index + 1)]);
+            }
             $key = $rate['mode'] . '|' . round((float) $rate['from_qty'], 3);
             if (isset($seen[$key])) {
                 throw new ValidationException(["rates.{$index}" => sprintf('Rate %d: two %s rates start at the same quantity.', $index + 1, $rate['mode'])]);

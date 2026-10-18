@@ -106,6 +106,9 @@ final class CatalogApiTest extends IntegrationTestCase
         );
         self::assertSame('denim-skirt', $this->send('GET', '/v1/products/legacy/2232')->decoded()['data']['product_type']);
         self::assertSame(404, $this->send('GET', '/v1/products/legacy/99999')->status());
+        // The old sitemap's numbers (10051–10076) stand for the articles in order: 10055 is 1055, 10069 is 2232.
+        self::assertSame($this->send('GET', '/v1/products/legacy/1055')->decoded()['data'], $this->send('GET', '/v1/products/legacy/10055')->decoded()['data']);
+        self::assertSame('denim-skirt', $this->send('GET', '/v1/products/legacy/10069')->decoded()['data']['product_type']);
     }
 
     public function testCategoriesCountTheirStyles(): void
@@ -182,6 +185,12 @@ final class CatalogApiTest extends IntegrationTestCase
 
         $sizes = $this->admin('POST', '/v1/admin/products', ['sizes' => ['S', 's']] + $this->styleInput());
         self::assertArrayHasKey('sizes', $sizes->decoded()['error']['fields']);
+
+        // Cargo trousers and chino pants are men only; denim skirts are for women and girls (owner rules).
+        $cargo = $this->admin('POST', '/v1/admin/products', ['segment' => 'women', 'product_type' => 'cargo-trouser'] + $this->styleInput());
+        self::assertSame('This type is only for men.', $cargo->decoded()['error']['fields']['product_type']);
+        $skirt = $this->admin('POST', '/v1/admin/products', ['segment' => 'boys', 'product_type' => 'denim-skirt'] + $this->styleInput());
+        self::assertSame('This type is only for women and girls.', $skirt->decoded()['error']['fields']['product_type']);
     }
 
     public function testSizeChartsAndCategoryTexts(): void

@@ -22,6 +22,12 @@ final class Commerce
         'carton_weight_g' => 1200,
     ];
 
+    /** Every size ordered in a color needs at least this many pieces (owner rule 2026-10-17), unless the settings say otherwise. */
+    public const MIN_PCS_PER_SIZE = 20;
+
+    /** Sample price per piece when the settings have none (owner decision 2026-10-17: $100 plus courier). */
+    public const SAMPLE_PRICE_CENTS = 10000;
+
     /** @var array<string, mixed>|null */
     private ?array $values = null;
 
@@ -37,6 +43,24 @@ final class Commerce
     public function leadTimeDays(): int
     {
         return max(1, (int) ($this->values()['lead_time_days'] ?? 30));
+    }
+
+    /** Days to prepare samples of shop styles, counted from the payment's confirmation. */
+    public function sampleLeadTimeDays(): int
+    {
+        return max(1, (int) ($this->values()['sample_lead_time_days'] ?? 7));
+    }
+
+    /** Days to make a custom-design sample (from the buyer's tech pack or reference). */
+    public function customSampleLeadTimeDays(): int
+    {
+        return max(1, (int) ($this->values()['custom_sample_lead_time_days'] ?? 14));
+    }
+
+    /** The sample price of a style without its own (per piece). */
+    public function samplePriceCents(): int
+    {
+        return max(0, (int) ($this->values()['sample_price_cents'] ?? self::SAMPLE_PRICE_CENTS));
     }
 
     /** How long a proforma invoice's prices are valid. */

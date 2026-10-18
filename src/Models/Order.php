@@ -9,10 +9,14 @@ use App\Core\Database;
 /**
  * Orders with frozen copies of the lines, prices, buyer and address.
  * Status changes always go through changeStatus(), which also writes the timeline.
+ * kind "bulk" is a wholesale order; kind "sample" is a sample order, paid in full before dispatch.
  */
 final class Order
 {
+    public const KINDS = ['bulk', 'sample'];
+
     public const STATUSES = [
+        'awaiting_price' => 'Waiting for our price',
         'awaiting_deposit' => 'Awaiting deposit',
         'payment_review' => 'Payment under review',
         'confirmed' => 'Confirmed',
@@ -24,10 +28,16 @@ final class Order
         'cancelled' => 'Cancelled',
     ];
 
-    public const MODES = ['air' => 'Air freight', 'sea' => 'Sea freight', 'forwarder' => 'Your own forwarder'];
+    public const MODES = ['air' => 'Air freight', 'sea' => 'Sea freight', 'forwarder' => 'Your own forwarder', 'courier' => 'Express courier'];
+
+    /** How sample orders name the statuses they share with bulk orders. */
+    public const SAMPLE_STATUSES = [
+        'awaiting_deposit' => 'Awaiting payment',
+        'confirmed' => 'Preparing your samples',
+    ];
 
     /** Statuses in which an order still counts as active for the buyer. */
-    public const OPEN_STATUSES = ['awaiting_deposit', 'payment_review', 'confirmed', 'in_production', 'ready_to_ship', 'shipped', 'on_hold'];
+    public const OPEN_STATUSES = ['awaiting_price', 'awaiting_deposit', 'payment_review', 'confirmed', 'in_production', 'ready_to_ship', 'shipped', 'on_hold'];
 
     private const JSON_COLUMNS = ['packing', 'customer', 'address', 'forwarder'];
 
@@ -111,13 +121,17 @@ final class Order
      *
      * @return array{items: list<array<string, mixed>>, total: int}
      */
-    public function adminList(?string $status, ?string $search, int $page, int $perPage, ?string $lateOn = null): array
+    public function adminList(?string $status, ?string $search, int $page, int $perPage, ?string $lateOn = null, ?string $kind = null): array
     {
         $where = ['1 = 1'];
         $params = [];
         if ($status !== null) {
             $where[] = 'o.status = ?';
             $params[] = $status;
+        }
+        if ($kind !== null) {
+            $where[] = 'o.kind = ?';
+            $params[] = $kind;
         }
         if ($lateOn !== null) {
             // Due before this (Pakistan) date and not ready yet.
@@ -171,6 +185,83 @@ final class Order
         $this->db->execute('UPDATE orders SET paid_cents = paid_cents + ? WHERE id = ?', [$cents, $orderId]);
     }
 
+    /**
+     * A buyer's paid sample orders whose cost has not been deducted from a bulk order yet (owner decision 2026-10-17).
+     * The cost is the samples and any custom-design sample, without the courier.
+     *
+     * @return list<array{id: int, order_no: string, cost_cents: int}>
+     */
+    public function uncreditedSamples(int $customerId, bool $lock = false): array
+    {
+        $rows = $this->db->fetchAll(
+            "SELECT id, order_no, goods_cents + addons_cents AS cost_cents FROM orders
+             WHERE customer_id = ? AND kind = 'sample' AND credited_to_order_id IS NULL AND paid_cents > 0
+               AND status IN ('confirmed', 'in_production', 'shipped', 'delivered')
+             ORDER BY placed_at, id" . ($lock ? ' FOR UPDATE' : ''),
+            [$customerId],
+        );
+
+        return array_map(static fn (array $row): array => ['id' => (int) $row['id'], 'order_no' => (string) $row['order_no'], 'cost_cents' => (int) $row['cost_cents']], $rows);
+    }
+
+    /**
+     * Deducts sample orders' cost from a bulk order.
+     *
+     * @param list<array{id: int, cost_cents: int}> $samples
+     */
+    public function creditSamples(int $bulkOrderId, array $samples): void
+    {
+        if ($samples === []) {
+            return;
+        }
+        $ids = array_map(static fn (array $sample): int => $sample['id'], $samples);
+        $in = implode(', ', array_fill(0, count($ids), '?'));
+        $this->db->execute("UPDATE orders SET credited_to_order_id = ? WHERE credited_to_order_id IS NULL AND id IN ({$in})", [$bulkOrderId, ...$ids]);
+        $this->db->execute(
+            'UPDATE orders SET credit_cents = credit_cents + ? WHERE id = ?',
+            [array_sum(array_map(static fn (array $sample): int => $sample['cost_cents'], $samples)), $bulkOrderId],
+        );
+    }
+
+    /**
+     * Takes a cancelled bulk order's sample credit back, so those samples are deducted from the buyer's next order.
+     *
+     * @return list<array{order_no: string, cents: int}> the sample orders released
+     */
+    public function releaseCredits(int $bulkOrderId): array
+    {
+        $samples = $this->creditedSamples($bulkOrderId);
+        if ($samples !== []) {
+            $this->db->execute('UPDATE orders SET credited_to_order_id = NULL WHERE credited_to_order_id = ?', [$bulkOrderId]);
+            $this->db->execute('UPDATE orders SET credit_cents = 0 WHERE id = ?', [$bulkOrderId]);
+        }
+
+        return $samples;
+    }
+
+    /**
+     * The sample orders whose cost was deducted from this bulk order.
+     *
+     * @return list<array{order_no: string, cents: int}>
+     */
+    public function creditedSamples(int $bulkOrderId): array
+    {
+        $rows = $this->db->fetchAll(
+            'SELECT order_no, goods_cents + addons_cents AS cents FROM orders WHERE credited_to_order_id = ? ORDER BY placed_at, id',
+            [$bulkOrderId],
+        );
+
+        return array_map(static fn (array $row): array => ['order_no' => (string) $row['order_no'], 'cents' => (int) $row['cents']], $rows);
+    }
+
+    /** The order number of the bulk order a sample order's cost was deducted from. */
+    public function orderNo(int $id): ?string
+    {
+        $orderNo = $this->db->fetchValue('SELECT order_no FROM orders WHERE id = ?', [$id]);
+
+        return $orderNo === null ? null : (string) $orderNo;
+    }
+
     /** Orders whose production is late on this (Pakistan) date. */
     public function countLate(string $today): int
     {
@@ -196,7 +287,8 @@ final class Order
     }
 
     /**
-     * Orders still waiting for the deposit with no payment reported (reminders and automatic cancelling).
+     * Orders waiting for the first payment with no payment reported (reminders and automatic cancelling),
+     * longest waiting first. They wait from priced_at: sample orders priced by staff become payable later.
      *
      * @return list<array<string, mixed>>
      */
@@ -206,18 +298,32 @@ final class Order
             "SELECT o.* FROM orders o
              WHERE o.status = 'awaiting_deposit'
                AND NOT EXISTS (SELECT 1 FROM order_payments p WHERE p.order_id = o.id AND p.status IN ('submitted', 'confirmed'))
-             ORDER BY o.placed_at, o.id",
+             ORDER BY COALESCE(o.priced_at, o.placed_at), o.id",
         );
 
         return array_map(static fn (array $row): array => self::decode($row), $rows);
     }
 
     /** @return array<string, int> status => number of orders */
-    public function countByStatus(): array
+    public function countByStatus(?string $kind = null): array
     {
-        $rows = $this->db->fetchAll('SELECT status, COUNT(*) AS n FROM orders GROUP BY status');
+        $rows = $kind === null
+            ? $this->db->fetchAll('SELECT status, COUNT(*) AS n FROM orders GROUP BY status')
+            : $this->db->fetchAll('SELECT status, COUNT(*) AS n FROM orders WHERE kind = ? GROUP BY status', [$kind]);
 
         return array_map('intval', array_column($rows, 'n', 'status'));
+    }
+
+    /**
+     * Sample orders waiting for staff to price them (daily summary), oldest first.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function awaitingPrice(): array
+    {
+        $rows = $this->db->fetchAll("SELECT * FROM orders WHERE status = 'awaiting_price' ORDER BY placed_at, id");
+
+        return array_map(static fn (array $row): array => self::decode($row), $rows);
     }
 
     /** @return list<array<string, mixed>> */
@@ -360,13 +466,13 @@ final class Order
         foreach (self::JSON_COLUMNS as $column) {
             $row[$column] = $row[$column] === null ? null : json_decode((string) $row[$column], true);
         }
-        foreach (['id', 'customer_id', 'total_pcs', 'goods_cents', 'addons_cents', 'deposit_percent', 'deposit_cents', 'paid_cents', 'lead_time_days', 'reminders_sent'] as $column) {
+        foreach (['id', 'customer_id', 'total_pcs', 'goods_cents', 'addons_cents', 'deposit_percent', 'deposit_cents', 'paid_cents', 'credit_cents', 'lead_time_days', 'reminders_sent'] as $column) {
             $row[$column] = (int) $row[$column];
         }
-        foreach (['freight_estimate_cents', 'freight_final_cents'] as $column) {
+        foreach (['freight_estimate_cents', 'freight_final_cents', 'credited_to_order_id'] as $column) {
             $row[$column] = $row[$column] === null ? null : (int) $row[$column];
         }
-        foreach (['placed_at', 'confirmed_at', 'balance_invoiced_at', 'shipped_at', 'delivered_at', 'cancelled_at', 'created_at', 'updated_at'] as $column) {
+        foreach (['placed_at', 'priced_at', 'confirmed_at', 'balance_invoiced_at', 'shipped_at', 'delivered_at', 'cancelled_at', 'created_at', 'updated_at'] as $column) {
             $row[$column] = $row[$column] === null ? null : gmdate(DATE_ATOM, (int) strtotime($row[$column] . ' UTC'));
         }
 

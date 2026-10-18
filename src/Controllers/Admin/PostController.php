@@ -13,6 +13,7 @@ use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Models\Post;
 use App\Services\ImageStore;
+use App\Services\Redirects;
 use App\Services\WebRevalidator;
 
 /** Blog posts (admin and editor). */
@@ -23,6 +24,7 @@ final class PostController extends AdminController
         private readonly HtmlSanitizer $sanitizer,
         private readonly ImageStore $images,
         private readonly WebRevalidator $revalidator,
+        private readonly Redirects $redirects,
     ) {
     }
 
@@ -70,6 +72,10 @@ final class PostController extends AdminController
         $data = $this->validated($request, $id);
 
         $this->posts->update($id, $data);
+        // A post readers could already open keeps its old address working.
+        if ($before['visibility'] === 'published') {
+            $this->redirects->moved('/post/' . $before['slug'], '/post/' . $data['slug'], 'post');
+        }
         $this->revalidator->revalidate(array_values(array_unique(['posts', 'post:' . $before['slug'], 'post:' . $data['slug']])));
 
         return Response::data($this->findOrFail($id));

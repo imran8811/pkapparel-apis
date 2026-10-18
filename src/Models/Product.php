@@ -16,6 +16,18 @@ final class Product
 
     public const TYPES = ['jeans-pant', 'denim-jacket', 'jeans-short', 'cargo-trouser', 'chino-pant', 'denim-skirt'];
 
+    /** Types sold in some segments only (owner rules; the website's lib/nav.ts typesFor() mirrors this). */
+    public const ONLY_IN = [
+        'cargo-trouser' => ['men'],
+        'chino-pant' => ['men'],
+        'denim-skirt' => ['women', 'girls'],
+    ];
+
+    public static function typeFits(string $segment, string $type): bool
+    {
+        return !isset(self::ONLY_IN[$type]) || in_array($segment, self::ONLY_IN[$type], true);
+    }
+
     public const STATUSES = ['draft', 'active', 'archived'];
 
     public const SORTS = ['featured', 'newest', 'price-asc', 'price-desc'];
@@ -24,7 +36,7 @@ final class Product
     public const FILLABLE = [
         'slug', 'name', 'style_no', 'segment', 'product_type', 'fit', 'fabric', 'composition', 'fabric_weight', 'stretch',
         'wash', 'closure', 'description_html', 'features', 'sizes', 'size_chart_id', 'price_cents', 'moq_per_color',
-        'set_pcs_per_size', 'lead_time_days', 'sample_price_cents', 'piece_weight_g', 'pcs_per_carton', 'carton_length_mm',
+        'set_pcs_per_size', 'min_pcs_per_size', 'lead_time_days', 'sample_price_cents', 'piece_weight_g', 'pcs_per_carton', 'carton_length_mm',
         'carton_width_mm', 'carton_height_mm', 'carton_weight_g', 'seo_title', 'seo_description', 'status', 'is_featured',
         'sort_order',
     ];
@@ -254,7 +266,7 @@ final class Product
         foreach (self::JSON_COLUMNS as $column) {
             $row[$column] = json_decode((string) $row[$column], true) ?: [];
         }
-        foreach (['id', 'size_chart_id', 'price_cents', 'moq_per_color', 'set_pcs_per_size', 'lead_time_days', 'sample_price_cents',
+        foreach (['id', 'size_chart_id', 'price_cents', 'moq_per_color', 'set_pcs_per_size', 'min_pcs_per_size', 'lead_time_days', 'sample_price_cents',
             'piece_weight_g', 'pcs_per_carton', 'carton_length_mm', 'carton_width_mm', 'carton_height_mm', 'carton_weight_g',
             'sort_order', 'price_min', 'price_max', 'color_count'] as $column) {
             if (isset($row[$column])) {

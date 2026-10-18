@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Core\Database;
 use App\Core\HttpException;
 use App\Core\RateLimiter;
 use App\Core\Request;
@@ -11,9 +12,13 @@ use App\Core\Response;
 use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Models\Inquiry;
+use App\Services\InquiryAttachments;
 use App\Services\InquiryNotifier;
 
-/** POST /v1/inquiries: contact messages, quote requests and sample requests from the website. */
+/**
+ * POST /v1/inquiries: contact messages, quote requests and sample requests from the website.
+ * Quote and sample requests can carry files uploaded beforehand (POST /v1/inquiry-files) and a link to bigger files.
+ */
 final class InquiryController
 {
     private const MAX_PER_HOUR = 5;
@@ -22,6 +27,8 @@ final class InquiryController
         private readonly Inquiry $inquiries,
         private readonly RateLimiter $limiter,
         private readonly InquiryNotifier $notifier,
+        private readonly InquiryAttachments $attachments,
+        private readonly Database $db,
     ) {
     }
 
@@ -44,6 +51,8 @@ final class InquiryController
             'message' => 'required|string|min:10|max:5000',
             'source_url' => 'nullable|string|max:500',
             'details' => 'nullable|array',
+            'link' => 'nullable|url|max:500',
+            'files' => 'nullable|array',
         ])->validate();
 
         // Quotes and samples depend on the destination (shipping, duties).
@@ -52,6 +61,19 @@ final class InquiryController
         }
 
         $details = self::cleanDetails($data['details'] ?? []);
+        if (!empty($data['link'])) {
+            if (preg_match('#^https?://#i', (string) $data['link']) !== 1) {
+                throw new ValidationException(['link' => 'Enter a link starting with https://']);
+            }
+            $details['link'] = (string) $data['link'];
+        }
+        $files = [];
+        if (!empty($data['files'])) {
+            if ($data['type'] === 'contact') {
+                throw new ValidationException(['files' => 'Files can be attached to quote and sample requests.']);
+            }
+            $files = $this->attachments->resolve($data['files']);
+        }
 
         $bucket = 'inquiry:' . $request->clientIp();
         if ($this->limiter->hit($bucket, self::MAX_PER_HOUR, 3600)) {
@@ -71,8 +93,13 @@ final class InquiryController
             'ip_address' => $request->clientIp(),
             'user_agent' => $request->userAgent(),
         ];
-        $id = $this->inquiries->create($inquiry);
-        $this->notifier->notify($id, $inquiry);
+        $id = $this->db->transaction(function () use ($inquiry, $files): int {
+            $id = $this->inquiries->create($inquiry);
+            $this->attachments->attach($id, $files);
+
+            return $id;
+        });
+        $this->notifier->notify($id, $inquiry + ['files' => $files]);
 
         return Response::data(['id' => $id, 'reference' => Inquiry::reference($id)], [], 201);
     }

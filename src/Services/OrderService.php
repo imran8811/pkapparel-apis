@@ -17,6 +17,7 @@ use App\Models\OrderDocument;
 use App\Models\OrderPayment;
 use App\Models\OrderPhoto;
 use App\Models\OrderStage;
+use App\Models\Review;
 use App\Models\Settings;
 use App\Models\Shipment;
 use PDOException;
@@ -27,7 +28,8 @@ use Throwable;
  *
  * Money rules (owner decision 2026-10-16): the deposit is a percentage (50%) of the goods and the
  * priced add-ons. Freight is an estimate until staff confirm it, and is paid with the balance,
- * together with any "price on request" add-ons.
+ * together with any "price on request" add-ons. Paid samples are deducted from the balance of the buyer's
+ * first bulk order once it is confirmed (owner decision 2026-10-17; SampleOrders::creditTo).
  */
 final class OrderService
 {
@@ -49,6 +51,7 @@ final class OrderService
         private readonly OrderPhoto $photos,
         private readonly OrderDocument $documents,
         private readonly Shipment $shipments,
+        private readonly Review $reviews,
     ) {
     }
 
@@ -79,6 +82,8 @@ final class OrderService
             'addons' => $this->options->active(),
             'deposit_percent' => $this->commerce->depositPercent(),
             'email_verified' => $customer['email_verified_at'] !== null,
+            // Paid samples, deducted from the balance once this order is confirmed.
+            'sample_credit_cents' => array_sum(array_column($this->orders->uncreditedSamples((int) $customer['id']), 'cost_cents')),
         ];
     }
 
@@ -201,8 +206,9 @@ final class OrderService
             $forwarder = ['name' => $data['forwarder_name'] ?? null, 'contact' => $data['forwarder_contact'] ?? null];
         }
 
+        $placedAt = gmdate('Y-m-d H:i:s');
         $id = $this->orders->create([
-            'order_no' => $this->newOrderNo(),
+            'order_no' => $this->nextOrderNo(),
             'customer_id' => $customerId,
             'status' => 'awaiting_deposit',
             'currency' => 'USD',
@@ -228,7 +234,8 @@ final class OrderService
             'forwarder' => $forwarder,
             'buyer_reference' => $data['buyer_reference'] ?? null,
             'notes' => $data['notes'] ?? null,
-            'placed_at' => gmdate('Y-m-d H:i:s'),
+            'placed_at' => $placedAt,
+            'priced_at' => $placedAt,
         ], $lines, $addonLines);
 
         $this->orders->addEvent($id, 'placed', null, 'awaiting_deposit', null, 'customer', $customerId);
@@ -250,12 +257,17 @@ final class OrderService
         $nextKind = self::nextPaymentKind($order['status']);
         $canPay = $nextKind !== null && $amounts['due_now_cents'] > 0;
         $placed = Format::local($order['placed_at']);
+        // A delivered bulk order can be reviewed once; "requested" means the email went out but nothing was written yet.
+        $review = $order['status'] === 'delivered' ? $this->reviews->findForOrder($order['id']) : null;
+        $reviewStatus = $review === null || $review['status'] === 'requested' ? null : $review['status'];
 
         $presented = [
             'order_no' => $order['order_no'],
+            'kind' => $order['kind'],
             'status' => $order['status'],
-            'status_label' => self::statusLabel($order['status'], $amounts),
+            'status_label' => self::statusLabel($order['status'], $amounts, $order['kind']),
             'placed_at' => $order['placed_at'],
+            'priced_at' => $order['priced_at'],
             'valid_until' => $placed->modify('+' . $this->commerce->piValidDays() . ' days')->format('Y-m-d'),
             'currency' => $order['currency'],
             'shipping_mode' => $order['shipping_mode'],
@@ -272,7 +284,7 @@ final class OrderService
             'lines' => $this->orders->lines($order['id']),
             'addons' => $this->orders->addons($order['id']),
             'amounts' => $amounts,
-            'payments' => array_map(static fn (array $p): array => self::presentPayment($p, $forStaff), $payments),
+            'payments' => array_map(static fn (array $p): array => self::presentPayment($p, $forStaff, $order['kind']), $payments),
             'events' => $this->orders->events($order['id'], !$forStaff),
             'next_payment_kind' => $canPay ? $nextKind : null,
             'can_submit_payment' => $canPay,
@@ -291,6 +303,14 @@ final class OrderService
             'delivered_at' => $order['delivered_at'],
             'cancelled_at' => $order['cancelled_at'],
             'cancel_reason' => $order['cancel_reason'],
+            'can_review' => $order['kind'] === 'bulk' && $order['status'] === 'delivered' && $reviewStatus === null,
+            'review_status' => $reviewStatus,
+            // Sample costs: deducted from this bulk order, or (not confirmed yet) waiting to be; the bulk order a sample order went to.
+            'credits' => $order['kind'] === 'bulk' ? $this->orders->creditedSamples($order['id']) : [],
+            'pending_credit_cents' => $order['kind'] === 'bulk' && in_array($order['status'], ['awaiting_deposit', 'payment_review'], true)
+                ? array_sum(array_column($this->orders->uncreditedSamples($order['customer_id']), 'cost_cents'))
+                : 0,
+            'credited_to' => $order['credited_to_order_id'] === null ? null : $this->orders->orderNo($order['credited_to_order_id']),
         ];
         if ($forStaff) {
             $presented = ['id' => $order['id'], 'customer_id' => $order['customer_id']] + $presented + ['status_before_hold' => $order['status_before_hold']];
@@ -310,8 +330,9 @@ final class OrderService
         $amounts = self::amounts($order, []);
         $summary = [
             'order_no' => $order['order_no'],
+            'kind' => $order['kind'],
             'status' => $order['status'],
-            'status_label' => self::statusLabel($order['status'], $amounts),
+            'status_label' => self::statusLabel($order['status'], $amounts, $order['kind']),
             'placed_at' => $order['placed_at'],
             'total_pcs' => $order['total_pcs'],
             'shipping_mode' => $order['shipping_mode'],
@@ -352,7 +373,9 @@ final class OrderService
             $estimate !== null => 'estimate',
             default => 'quoted',
         };
-        $total = $order['goods_cents'] + $order['addons_cents'] + ($freight ?? 0);
+        // Sample costs deducted from a bulk order once it is confirmed (owner decision 2026-10-17).
+        $credit = (int) ($order['credit_cents'] ?? 0);
+        $total = max(0, $order['goods_cents'] + $order['addons_cents'] + ($freight ?? 0) - $credit);
         $paid = $order['paid_cents'];
         $dueNow = match (self::nextPaymentKind($order['status'])) {
             'deposit' => max(0, $order['deposit_cents'] - $paid),
@@ -366,6 +389,7 @@ final class OrderService
             'has_quoted_addons' => array_filter($addons, static fn (array $a): bool => $a['line_cents'] === null) !== [],
             'freight_cents' => $freight,
             'freight_status' => $freightStatus,
+            'credit_cents' => $credit,
             'total_cents' => $total,
             'deposit_percent' => $order['deposit_percent'],
             'deposit_cents' => $order['deposit_cents'],
@@ -385,7 +409,7 @@ final class OrderService
         if (!self::canCancel($order, $this->payments->forOrder($order['id']))) {
             throw new HttpException(409, 'cannot_cancel', 'This order can no longer be cancelled online. Please contact us.');
         }
-        $changed = $this->orders->changeStatus($order['id'], 'awaiting_deposit', 'cancelled', 'customer', $customerId, $reason, [
+        $changed = $this->orders->changeStatus($order['id'], $order['status'], 'cancelled', 'customer', $customerId, $reason, [
             'cancelled_at' => gmdate('Y-m-d H:i:s'),
             'cancel_reason' => $reason,
         ]);
@@ -450,7 +474,7 @@ final class OrderService
                     'slip_type' => $file['type'] ?? null,
                     'notes' => $data['notes'] ?? null,
                 ]);
-                $note = sprintf('%s of %s reported, transaction %s', OrderPayment::KINDS[$kind], Format::money($data['amount_cents']), $data['transaction_id']);
+                $note = sprintf('%s of %s reported, transaction %s', $order['kind'] === 'sample' ? 'Payment' : OrderPayment::KINDS[$kind], Format::money($data['amount_cents']), $data['transaction_id']);
                 if ($order['status'] === 'awaiting_deposit') {
                     $this->orders->changeStatus($order['id'], 'awaiting_deposit', 'payment_review', 'customer', $customerId, $note);
                 } else {
@@ -470,13 +494,13 @@ final class OrderService
         $fresh = $this->orders->find($order['id']);
         if ($payment !== null && $fresh !== null) {
             try {
-                $this->mailer->paymentSubmitted($this->present($fresh, false), $this->present($fresh, true), self::presentPayment($payment, true));
+                $this->mailer->paymentSubmitted($this->present($fresh, false), $this->present($fresh, true), self::presentPayment($payment, true, $fresh['kind']));
             } catch (Throwable $e) {
                 $this->logger->error('Payment emails could not be sent', ['order' => $order['order_no'], 'error' => $e->getMessage()]);
             }
         }
 
-        return self::presentPayment((array) $payment, false);
+        return self::presentPayment((array) $payment, false, $order['kind']);
     }
 
     /** @return array<string, mixed>|null Bank account for transfers, or null until staff have entered it. */
@@ -494,11 +518,12 @@ final class OrderService
      * @param array<string, mixed> $payment
      * @return array<string, mixed>
      */
-    public static function presentPayment(array $payment, bool $forStaff): array
+    public static function presentPayment(array $payment, bool $forStaff, string $orderKind = 'bulk'): array
     {
         $presented = [
             'kind' => $payment['kind'],
-            'kind_label' => OrderPayment::KINDS[$payment['kind']] ?? $payment['kind'],
+            // A sample order is paid in one go, so its "deposit" is simply the payment.
+            'kind_label' => $orderKind === 'sample' ? 'Payment' : (OrderPayment::KINDS[$payment['kind']] ?? $payment['kind']),
             'amount_cents' => $payment['amount_cents'],
             'currency' => $payment['currency'],
             'transaction_id' => $payment['transaction_id'],
@@ -527,11 +552,14 @@ final class OrderService
         return $presented;
     }
 
-    /** The status as buyers and staff read it ("Ready to ship, paid" once nothing is left to pay). */
-    public static function statusLabel(string $status, array $amounts): string
+    /** The status as buyers and staff read it ("Ready to ship, paid" once nothing is left to pay; sample wording for samples). */
+    public static function statusLabel(string $status, array $amounts, string $kind = 'bulk'): string
     {
         if ($status === 'ready_to_ship' && $amounts['total_cents'] - $amounts['paid_cents'] <= 0) {
             return 'Ready to ship, paid';
+        }
+        if ($kind === 'sample' && isset(Order::SAMPLE_STATUSES[$status])) {
+            return Order::SAMPLE_STATUSES[$status];
         }
 
         return Order::STATUSES[$status] ?? $status;
@@ -564,8 +592,15 @@ final class OrderService
     private function documentList(array $order, array $payments, bool $forStaff): array
     {
         $documents = [];
-        if ($order['status'] !== 'cancelled' || $forStaff) {
-            $documents[] = ['kind' => 'proforma', 'title' => 'Proforma invoice', 'number' => $order['order_no'], 'date' => $order['placed_at']];
+        $sample = $order['kind'] === 'sample';
+        // A sample order waiting for our price has no invoice yet (staff see the draft).
+        if (($order['status'] !== 'cancelled' && $order['status'] !== 'awaiting_price') || $forStaff) {
+            $documents[] = [
+                'kind' => 'proforma',
+                'title' => $sample ? 'Sample invoice' : 'Proforma invoice',
+                'number' => $order['order_no'],
+                'date' => $sample ? ($order['priced_at'] ?? $order['placed_at']) : $order['placed_at'],
+            ];
         }
         if ($order['balance_invoice_no'] !== null) {
             $documents[] = ['kind' => 'invoice', 'title' => 'Invoice for the balance', 'number' => $order['balance_invoice_no'], 'date' => $order['balance_invoiced_at']];
@@ -574,7 +609,7 @@ final class OrderService
             if ($payment['status'] === 'confirmed' && $payment['receipt_no'] !== null) {
                 $documents[] = [
                     'kind' => 'receipt',
-                    'title' => 'Receipt, ' . strtolower(OrderPayment::KINDS[$payment['kind']] ?? $payment['kind']),
+                    'title' => $sample ? 'Receipt' : 'Receipt, ' . strtolower(OrderPayment::KINDS[$payment['kind']] ?? $payment['kind']),
                     'number' => $payment['receipt_no'],
                     'date' => $payment['reviewed_at'],
                 ];
@@ -613,7 +648,7 @@ final class OrderService
      */
     private static function canCancel(array $order, array $payments): bool
     {
-        return $order['status'] === 'awaiting_deposit'
+        return in_array($order['status'], ['awaiting_deposit', 'awaiting_price'], true)
             && array_filter($payments, static fn (array $p): bool => $p['status'] !== 'rejected') === [];
     }
 
@@ -635,8 +670,8 @@ final class OrderService
         return $chosen;
     }
 
-    /** "PK-261016-482": the date in Pakistan and a random 3-digit code (owner decision 2026-10-16). */
-    private function newOrderNo(): string
+    /** "PK-261016-482": the date in Pakistan and a random 3-digit code (owner decision 2026-10-16). Bulk and sample orders share it. */
+    public function nextOrderNo(): string
     {
         $prefix = 'PK-' . Format::local()->format('ymd') . '-';
         for ($i = 0; $i < 50; $i++) {

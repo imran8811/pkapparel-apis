@@ -56,7 +56,7 @@ final class OrderController
         if ($payment === null) {
             throw HttpException::notFound('This receipt does not exist.');
         }
-        $pdf = $this->pdfs->receipt($this->service->present($order, false), OrderService::presentPayment($payment, true));
+        $pdf = $this->pdfs->receipt($this->service->present($order, false), OrderService::presentPayment($payment, true, $order['kind']));
 
         return Response::file($pdf, 'application/pdf', OrderPdfs::receiptFilename((string) $payment['receipt_no']));
     }
@@ -109,7 +109,8 @@ final class OrderController
     {
         $data = Validator::make($request->all(), [
             'address_id' => 'required|int|min:1',
-            'shipping_mode' => 'required|in:' . implode(',', array_keys(Order::MODES)),
+            // The courier is for sample orders (SampleOrderController).
+            'shipping_mode' => 'required|in:air,sea,forwarder',
             'forwarder_name' => 'nullable|string|max:120',
             'forwarder_contact' => 'nullable|string|max:300',
             'addons' => 'nullable|array|max:20',
@@ -153,9 +154,12 @@ final class OrderController
         if ($order['status'] === 'cancelled') {
             throw new HttpException(409, 'order_cancelled', 'This order was cancelled, so it has no proforma invoice.');
         }
+        if ($order['status'] === 'awaiting_price') {
+            throw new HttpException(409, 'not_priced', 'We are still pricing this sample order. The invoice follows by email.');
+        }
         $pdf = $this->pdfs->proforma($this->service->present($order, false), $this->service->bank());
 
-        return Response::file($pdf, 'application/pdf', OrderPdfs::proformaFilename($order['order_no']));
+        return Response::file($pdf, 'application/pdf', OrderPdfs::proformaFilename($order['order_no'], $order['kind']));
     }
 
     /** POST /v1/account/orders/{orderNo}/cancel {reason} */

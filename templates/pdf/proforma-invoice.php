@@ -1,7 +1,8 @@
 <?php
 /**
  * Proforma invoice, or the balance invoice issued when an order is ready to ship (A4, rendered by dompdf:
- * tables for layout, no flexbox or grid; DejaVu Sans for full Unicode).
+ * tables for layout, no flexbox or grid; DejaVu Sans for full Unicode). A sample order's proforma is its
+ * "sample invoice": paid in full before dispatch, with the courier instead of freight.
  * Variables: $order (presented order), $document (kind: proforma|balance, number, date), $bank (array|null),
  * $company, $contact, $addresses (settings), $logo (data URI), $e (escaper).
  */
@@ -10,6 +11,8 @@ use App\Core\Format;
 
 $amounts = $order['amounts'];
 $isBalance = ($document['kind'] ?? 'proforma') === 'balance';
+$isSample = ($order['kind'] ?? 'bulk') === 'sample';
+$heading = $isBalance ? 'INVOICE' : ($isSample ? 'SAMPLE INVOICE' : 'PROFORMA INVOICE');
 $received = array_values(array_filter($order['payments'] ?? [], static fn (array $p): bool => $p['status'] === 'confirmed'));
 $customer = $order['customer'];
 $address = $order['address'];
@@ -32,7 +35,7 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title><?= $isBalance ? 'Invoice ' . $e($document['number']) : 'Proforma invoice ' . $e($order['order_no']) ?></title>
+<title><?= $isBalance ? 'Invoice ' . $e($document['number']) : ($isSample ? 'Sample invoice ' : 'Proforma invoice ') . $e($order['order_no']) ?></title>
 <style>
   @page { margin: 34px 38px 46px; }
   body { font-family: 'DejaVu Sans', sans-serif; font-size: 9.5px; color: #0b132b; line-height: 1.45; }
@@ -66,7 +69,7 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
       <img src="<?= $logo ?>" style="height: 56px;" alt="PK Apparel">
     </td>
     <td style="text-align: right;">
-      <h1><?= $isBalance ? 'INVOICE' : 'PROFORMA INVOICE' ?></h1>
+      <h1><?= $heading ?></h1>
       <table style="margin-top: 6px;">
         <?php if ($isBalance): ?>
           <tr><td class="muted" style="text-align: right; padding-right: 8px;">Invoice no.</td><td class="mono" style="width: 1%; white-space: nowrap; font-weight: bold;"><?= $e($document['number']) ?></td></tr>
@@ -74,7 +77,7 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
           <tr><td class="muted" style="text-align: right; padding-right: 8px;">Date</td><td style="white-space: nowrap;"><?= $e(Format::date($document['date'])) ?></td></tr>
           <tr><td class="muted" style="text-align: right; padding-right: 8px;">Due</td><td style="white-space: nowrap;">Before shipment</td></tr>
         <?php else: ?>
-          <tr><td class="muted" style="text-align: right; padding-right: 8px;">PI / order no.</td><td class="mono" style="width: 1%; white-space: nowrap; font-weight: bold;"><?= $e($order['order_no']) ?></td></tr>
+          <tr><td class="muted" style="text-align: right; padding-right: 8px;"><?= $isSample ? 'Invoice / order no.' : 'PI / order no.' ?></td><td class="mono" style="width: 1%; white-space: nowrap; font-weight: bold;"><?= $e($order['order_no']) ?></td></tr>
           <tr><td class="muted" style="text-align: right; padding-right: 8px;">Date</td><td style="white-space: nowrap;"><?= $e(Format::date($order['placed_at'])) ?></td></tr>
           <tr><td class="muted" style="text-align: right; padding-right: 8px;">Valid until</td><td style="white-space: nowrap;"><?= $e(Format::date($order['valid_until'])) ?></td></tr>
         <?php endif; ?>
@@ -121,9 +124,15 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
     <td style="width: 8px;"></td>
     <td class="box" style="width: 25%;"><h2>Terms</h2><?= $e($order['incoterm']) ?> · USD</td>
     <td style="width: 8px;"></td>
-    <td class="box" style="width: 25%;"><h2>Payment</h2><?= (int) $amounts['deposit_percent'] ?>% deposit, balance before shipment, by bank transfer</td>
-    <td style="width: 8px;"></td>
-    <td class="box"><h2>Production</h2>About <?= (int) $order['lead_time_days'] ?> days after the deposit is confirmed</td>
+    <?php if ($isSample): ?>
+      <td class="box" style="width: 25%;"><h2>Payment</h2>In full before dispatch, by bank transfer</td>
+      <td style="width: 8px;"></td>
+      <td class="box"><h2>Ready</h2>About <?= (int) $order['lead_time_days'] ?> days after the payment is confirmed</td>
+    <?php else: ?>
+      <td class="box" style="width: 25%;"><h2>Payment</h2><?= (int) $amounts['deposit_percent'] ?>% deposit, balance before shipment, by bank transfer</td>
+      <td style="width: 8px;"></td>
+      <td class="box"><h2>Production</h2>About <?= (int) $order['lead_time_days'] ?> days after the deposit is confirmed</td>
+    <?php endif; ?>
   </tr>
 </table>
 
@@ -168,23 +177,34 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
   <tr>
     <td style="width: 52%; padding-right: 18px;">
       <?php $packing = $order['packing']; ?>
-      <h2>Packing estimate</h2>
-      <?= number_format($order['total_pcs']) ?> pcs in about <?= (int) $packing['cartons'] ?> cartons ·
-      <?= $e(number_format($packing['gross_g'] / 1000, 1)) ?> kg gross · <?= $e(number_format((float) $packing['cbm'], 2)) ?> CBM
+      <?php if (!$isSample): ?>
+        <h2>Packing estimate</h2>
+        <?= number_format($order['total_pcs']) ?> pcs in about <?= (int) $packing['cartons'] ?> cartons ·
+        <?= $e(number_format($packing['gross_g'] / 1000, 1)) ?> kg gross · <?= $e(number_format((float) $packing['cbm'], 2)) ?> CBM
+      <?php endif; ?>
       <?php if ($order['notes']): ?>
-        <h2 style="margin-top: 10px;">Buyer's notes</h2>
+        <h2 style="<?= $isSample ? '' : 'margin-top: 10px;' ?>">Buyer's notes</h2>
         <?= nl2br($e($order['notes'])) ?>
       <?php endif; ?>
     </td>
     <td>
       <table class="totals">
-        <tr><td>Goods (<?= number_format($order['total_pcs']) ?> pcs)</td><td class="num"><?= $e(Format::money($amounts['goods_cents'])) ?></td></tr>
-        <?php if ($order['addons'] !== []): ?>
-          <tr><td>Add-ons<?= $amounts['has_quoted_addons'] ? ' (priced items)' : '' ?></td><td class="num"><?= $e(Format::money($amounts['addons_cents'])) ?></td></tr>
+        <?php // A sample order's pieces include its custom-design sample, which has its own line. ?>
+        <?php $goodsPcs = $isSample ? array_sum(array_column($order['lines'], 'qty')) : $order['total_pcs']; ?>
+        <?php if (!$isSample || $goodsPcs > 0): ?>
+          <tr><td><?= $isSample ? 'Samples' : 'Goods' ?> (<?= number_format($goodsPcs) ?> pcs)</td><td class="num"><?= $e(Format::money($amounts['goods_cents'])) ?></td></tr>
         <?php endif; ?>
-        <tr><td>Freight</td><td class="num"><?= $e($freightLabel) ?></td></tr>
+        <?php if ($order['addons'] !== []): ?>
+          <tr><td><?= $isSample ? 'Custom-design sample' : 'Add-ons' ?><?= $amounts['has_quoted_addons'] ? ' (priced items)' : '' ?></td><td class="num"><?= $e(Format::money($amounts['addons_cents'])) ?></td></tr>
+        <?php endif; ?>
+        <tr><td><?= $isSample ? 'Courier' : 'Freight' ?></td><td class="num"><?= $e($freightLabel) ?></td></tr>
+        <?php if (($amounts['credit_cents'] ?? 0) > 0): ?>
+          <tr><td>Samples deducted (<?= $e(implode(', ', array_column($order['credits'] ?? [], 'order_no'))) ?>)</td><td class="num">−<?= $e(Format::money($amounts['credit_cents'])) ?></td></tr>
+        <?php endif; ?>
         <tr class="grand"><td>Total</td><td class="num"><?= $e(Format::money($amounts['total_cents'])) ?></td></tr>
-        <?php if ($isBalance): ?>
+        <?php if ($isSample): ?>
+          <tr><td class="muted">Paid in full before dispatch</td><td class="num muted"><?= $e(Format::money($amounts['deposit_cents'])) ?></td></tr>
+        <?php elseif ($isBalance): ?>
           <?php foreach ($received as $payment): ?>
             <tr><td class="muted"><?= $e($payment['kind_label']) ?> received<?= $payment['receipt_no'] ? ' (' . $e($payment['receipt_no']) . ')' : '' ?></td><td class="num muted">−<?= $e(Format::money((int) ($payment['received_cents'] ?? $payment['amount_cents']))) ?></td></tr>
           <?php endforeach; ?>
@@ -232,6 +252,11 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
 
 <h2 style="margin-top: 14px;">Terms</h2>
 <ul class="terms" style="margin: 0; padding-left: 14px;">
+<?php if ($isSample): ?>
+  <li>Sample prices are per piece in US dollars. We make or pick the samples once the payment is confirmed and send them by express courier with tracking.</li>
+  <li>The courier cost is included. Import duties and taxes, if any, are paid by the buyer.</li>
+  <li>Ready dates are estimates. Our terms of sale apply (pkapparel.com/terms-of-sale).</li>
+<?php else: ?>
   <li>Prices are per piece in US dollars. Every order is made to order; production starts when the deposit is confirmed.</li>
   <li><?= match ($amounts['freight_status']) {
       'none' => 'The buyer books the freight; we hand the goods to the buyer\'s forwarder in Pakistan.',
@@ -239,12 +264,14 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
       default => 'The freight is an estimate until confirmed. The final freight is invoiced with the balance. Import duties and taxes are paid by the buyer.',
   } ?></li>
   <?php if ($amounts['has_quoted_addons']): ?><li>Add-ons marked "On request" are quoted separately and invoiced with the balance.</li><?php endif; ?>
+  <?php if (($order['pending_credit_cents'] ?? 0) > 0): ?><li>The cost of your samples (<?= $e(Format::money($order['pending_credit_cents'])) ?>) is deducted from the balance once this order is confirmed.</li><?php endif; ?>
   <?php if ($isBalance): ?>
     <li>Goods ship after the full amount is received. Our terms of sale apply (pkapparel.com/terms-of-sale).</li>
   <?php else: ?>
     <li>Ready dates are estimates and may change with approvals, fabric availability or holidays. Goods ship after the full amount is received.</li>
     <li>Changes and cancellations are possible until the fabric is cut. Our terms of sale apply (pkapparel.com/terms-of-sale).</li>
   <?php endif; ?>
+<?php endif; ?>
 </ul>
 </body>
 </html>

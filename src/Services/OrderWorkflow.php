@@ -23,7 +23,7 @@ use Throwable;
 final class OrderWorkflow
 {
     /** Statuses an order can be put on hold or cancelled from. */
-    private const ACTIVE = ['awaiting_deposit', 'payment_review', 'confirmed', 'in_production', 'ready_to_ship'];
+    private const ACTIVE = ['awaiting_price', 'awaiting_deposit', 'payment_review', 'confirmed', 'in_production', 'ready_to_ship'];
 
     public function __construct(
         private readonly Database $db,
@@ -68,7 +68,18 @@ final class OrderWorkflow
     public function cancel(array $order, array $staff, string $reason, bool $notify): void
     {
         $this->expect($order, [...self::ACTIVE, 'on_hold'], 'This order can no longer be cancelled.');
-        $this->change($order, 'cancelled', $staff, $reason, ['cancelled_at' => gmdate('Y-m-d H:i:s'), 'cancel_reason' => $reason, 'status_before_hold' => null]);
+        $this->db->transaction(function () use ($order, $staff, $reason): void {
+            $this->change($order, 'cancelled', $staff, $reason, ['cancelled_at' => gmdate('Y-m-d H:i:s'), 'cancel_reason' => $reason, 'status_before_hold' => null]);
+            // Samples deducted from this order are deducted from the buyer's next order instead.
+            $released = $this->orders->releaseCredits($order['id']);
+            if ($released !== []) {
+                $this->orders->addEvent($order['id'], 'note', null, null, sprintf(
+                    'Samples %s (%s) will be deducted from the buyer\'s next order instead.',
+                    implode(', ', array_column($released, 'order_no')),
+                    Format::money(array_sum(array_column($released, 'cents'))),
+                ), 'staff', $staff['id'], false);
+            }
+        });
         if ($notify) {
             $paid = $order['paid_cents'] > 0 ? ' We will contact you about the payment you made.' : '';
             $this->notify($order['id'], fn (array $view) => $this->mailer->notice($view, 'Your order was cancelled', 'We have cancelled your order.' . $paid, $reason));
@@ -109,6 +120,10 @@ final class OrderWorkflow
         if (in_array($order['status'], ['shipped', 'delivered', 'cancelled'], true)) {
             throw new HttpException(409, 'locked', 'The charges of a shipped or cancelled order cannot change.');
         }
+        // A sample order is paid in full: its price is fixed once the buyer has it.
+        if ($order['kind'] === 'sample' && $order['status'] !== 'awaiting_price') {
+            throw new HttpException(409, 'locked', 'The price of this sample order was already sent to the buyer.');
+        }
         $addons = array_column($this->orders->addons($order['id']), null, 'id');
         foreach (array_keys($addonPrices) as $addonId) {
             if (!isset($addons[$addonId])) {
@@ -147,6 +162,9 @@ final class OrderWorkflow
      */
     public function readyToShip(array $order, array $staff): void
     {
+        if ($order['kind'] === 'sample') {
+            throw new HttpException(409, 'wrong_kind', 'Sample orders are paid in full: mark them as shipped when they are ready.');
+        }
         $this->expect($order, ['confirmed', 'in_production'], 'Only an order in production can be marked ready to ship.');
         if ($order['shipping_mode'] !== 'forwarder' && $order['freight_final_cents'] === null && $order['freight_estimate_cents'] === null) {
             throw new HttpException(409, 'freight_missing', 'Enter the final freight first, so the balance invoice is complete.');
@@ -177,7 +195,12 @@ final class OrderWorkflow
      */
     public function ship(array $order, array $staff, array $data, ?string $unpaidReason): void
     {
-        $this->expect($order, ['ready_to_ship'], 'Mark the order ready to ship first.');
+        // Samples ship once they are made (paid in full); bulk orders after "ready to ship" and the balance.
+        if ($order['kind'] === 'sample') {
+            $this->expect($order, ['confirmed', 'in_production'], 'Samples ship after the payment is confirmed.');
+        } else {
+            $this->expect($order, ['ready_to_ship'], 'Mark the order ready to ship first.');
+        }
         $amounts = OrderService::amounts($order, $this->orders->addons($order['id']));
         $unpaid = $amounts['total_cents'] - $amounts['paid_cents'];
         if ($unpaid > 0 && ($unpaidReason === null || $unpaidReason === '')) {

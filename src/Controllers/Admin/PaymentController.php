@@ -44,10 +44,11 @@ final class PaymentController extends AdminController
                 continue;
             }
             $amounts = OrderService::amounts($order, $this->orders->addons($order['id']));
-            $items[] = OrderService::presentPayment($payment, true) + [
+            $items[] = OrderService::presentPayment($payment, true, $order['kind']) + [
                 'order' => [
                     'id' => $order['id'],
                     'order_no' => $order['order_no'],
+                    'kind' => $order['kind'],
                     'status' => $order['status'],
                     'company_name' => $order['customer']['company_name'] ?? '',
                     'country_code' => $order['customer']['country_code'] ?? '',
@@ -122,7 +123,7 @@ final class PaymentController extends AdminController
         if ($payment === null || $order === null || $payment['receipt_no'] === null) {
             throw HttpException::notFound('This receipt does not exist.');
         }
-        $pdf = $this->pdfs->receipt($this->service->present($order, false), OrderService::presentPayment($payment, true));
+        $pdf = $this->pdfs->receipt($this->service->present($order, false), OrderService::presentPayment($payment, true, $order['kind']));
 
         return Response::file($pdf, 'application/pdf', OrderPdfs::receiptFilename($payment['receipt_no']));
     }

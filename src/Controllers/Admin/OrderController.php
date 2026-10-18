@@ -17,11 +17,13 @@ use App\Services\OrderPdfs;
 use App\Services\OrderService;
 use App\Services\OrderWorkflow;
 use App\Services\PaymentSlips;
+use App\Services\SampleOrders;
 
 /**
- * Orders in the admin: the list (with a "late" filter), the order page, its PDFs, and the staff workflow
- * (hold, cancel, due date, charges, ready to ship, shipped, delivered, notes). Admins and sales staff run the
- * workflow; production staff can read orders. Payments are in PaymentController, production in ProductionController.
+ * Orders in the admin: the list (with "late" and sample filters), the order page, its PDFs, and the staff workflow
+ * (hold, cancel, due date, charges, ready to ship, shipped, delivered, notes, a sample order's price). Admins and
+ * sales staff run the workflow; production staff can read orders. Payments are in PaymentController, production in
+ * ProductionController.
  */
 final class OrderController extends AdminController
 {
@@ -31,24 +33,27 @@ final class OrderController extends AdminController
         private readonly Customer $customers,
         private readonly OrderService $service,
         private readonly OrderWorkflow $workflow,
+        private readonly SampleOrders $samples,
         private readonly OrderPdfs $pdfs,
         private readonly PaymentSlips $slips,
     ) {
     }
 
-    /** GET /v1/admin/orders?status=&q=&page= (status "late": production due date passed) */
+    /** GET /v1/admin/orders?status=&kind=&q=&page= (status "late": production due date passed; kind: bulk or sample) */
     public function index(Request $request): Response
     {
         $this->authorize($request, 'sales', 'production');
         $query = Validator::make($request->allQuery(), [
             'status' => 'nullable|in:late,' . implode(',', array_keys(Order::STATUSES)),
+            'kind' => 'nullable|in:' . implode(',', Order::KINDS),
             'q' => 'nullable|string|max:100',
         ])->validate();
         [$page, $perPage] = $this->pagination($request, 25);
         $late = ($query['status'] ?? null) === 'late';
+        $kind = $query['kind'] ?? null;
         $today = Format::local()->format('Y-m-d');
 
-        $result = $this->orders->adminList($late ? null : ($query['status'] ?? null), $query['q'] ?? null, $page, $perPage, $late ? $today : null);
+        $result = $this->orders->adminList($late ? null : ($query['status'] ?? null), $query['q'] ?? null, $page, $perPage, $late ? $today : null, $kind);
 
         return Response::data(
             array_map(static fn (array $order): array => OrderService::summary($order, true) + [
@@ -56,10 +61,21 @@ final class OrderController extends AdminController
                 'production_days_left' => OrderService::daysLeft($order),
             ], $result['items']),
             self::paginationMeta($page, $perPage, $result['total']) + [
-                'counts' => $this->orders->countByStatus() + ['late' => $this->orders->countLate($today)],
+                'counts' => $this->orders->countByStatus($kind) + ['late' => $this->orders->countLate($today)],
+                'samples' => array_sum($this->orders->countByStatus('sample')),
                 'payments_to_check' => $this->payments->countByStatus('submitted'),
             ],
         );
+    }
+
+    /** POST /v1/admin/orders/{id}/send-price: a sample order is priced, so the buyer can pay. */
+    public function sendPrice(Request $request): Response
+    {
+        $this->authorize($request, 'sales');
+        $order = $this->order($request);
+        $this->samples->sendPrice($order, $this->staff($request));
+
+        return $this->fresh($order);
     }
 
     /** GET /v1/admin/orders/{id} */
@@ -77,7 +93,7 @@ final class OrderController extends AdminController
         $order = $this->order($request);
         $pdf = $this->pdfs->proforma($this->service->present($order, true), $this->service->bank());
 
-        return Response::file($pdf, 'application/pdf', OrderPdfs::proformaFilename($order['order_no']));
+        return Response::file($pdf, 'application/pdf', OrderPdfs::proformaFilename($order['order_no'], $order['kind']));
     }
 
     /** GET /v1/admin/orders/{id}/invoice: the balance invoice, once the order is ready to ship. */

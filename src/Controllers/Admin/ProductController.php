@@ -14,6 +14,7 @@ use App\Core\Validator;
 use App\Models\Product;
 use App\Models\ProductColor;
 use App\Models\SizeChart;
+use App\Services\Redirects;
 use App\Services\WebRevalidator;
 
 /** Styles in the wholesale shop (admin and editor). Colors and their photos are saved by ProductColorController. */
@@ -25,6 +26,7 @@ final class ProductController extends AdminController
         private readonly SizeChart $charts,
         private readonly HtmlSanitizer $sanitizer,
         private readonly WebRevalidator $revalidator,
+        private readonly Redirects $redirects,
     ) {
     }
 
@@ -98,6 +100,10 @@ final class ProductController extends AdminController
         $this->products->update($id, $data);
         $this->products->replaceTiers($id, $tiers);
         $this->products->touch($id);
+        // A style that was in the shop keeps its old address working.
+        if ($before['status'] === 'active') {
+            $this->redirects->moved(self::path($before), self::path($data), 'style');
+        }
         $this->revalidator->revalidate(array_values(array_unique(['products', 'product:' . $before['slug'], 'product:' . $data['slug']])));
 
         return Response::data($this->present($id));
@@ -130,6 +136,12 @@ final class ProductController extends AdminController
     private function findOrFail(int $id): array
     {
         return $this->products->find($id) ?? throw HttpException::notFound('This style does not exist.');
+    }
+
+    /** @param array<string, mixed> $product The style's address in the shop. */
+    private static function path(array $product): string
+    {
+        return "/wholesale-shop/{$product['segment']}/{$product['product_type']}/{$product['slug']}";
     }
 
     private function hasColorWithPhoto(int $id): bool
@@ -167,6 +179,7 @@ final class ProductController extends AdminController
             'price_cents' => 'required|int|min:1|max:100000000',
             'moq_per_color' => 'nullable|int|min:1|max:100000',
             'set_pcs_per_size' => 'nullable|int|min:1|max:50',
+            'min_pcs_per_size' => 'nullable|int|min:1|max:10000',
             'lead_time_days' => 'nullable|int|min:1|max:365',
             'sample_price_cents' => 'nullable|int|min:0|max:10000000',
             'piece_weight_g' => 'nullable|int|min:1|max:10000',
@@ -183,7 +196,7 @@ final class ProductController extends AdminController
         ])->validate();
 
         $data += array_fill_keys(['style_no', 'fit', 'fabric', 'composition', 'fabric_weight', 'stretch', 'wash', 'closure', 'size_chart_id',
-            'moq_per_color', 'set_pcs_per_size', 'lead_time_days', 'sample_price_cents', 'piece_weight_g', 'pcs_per_carton',
+            'moq_per_color', 'set_pcs_per_size', 'min_pcs_per_size', 'lead_time_days', 'sample_price_cents', 'piece_weight_g', 'pcs_per_carton',
             'carton_length_mm', 'carton_width_mm', 'carton_height_mm', 'carton_weight_g', 'seo_title', 'seo_description'], null);
         $data['status'] ??= 'draft';
         $data['is_featured'] ??= false;
@@ -195,6 +208,9 @@ final class ProductController extends AdminController
         }
         if ($data['size_chart_id'] !== null && $this->charts->find($data['size_chart_id']) === null) {
             throw new ValidationException(['size_chart_id' => 'This size chart does not exist.']);
+        }
+        if (!Product::typeFits($data['segment'], $data['product_type'])) {
+            throw new ValidationException(['product_type' => sprintf('This type is only for %s.', implode(' and ', Product::ONLY_IN[$data['product_type']]))]);
         }
 
         $data['description_html'] = $this->sanitizer->sanitize((string) ($data['description_html'] ?? ''));

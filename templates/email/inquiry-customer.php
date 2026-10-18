@@ -1,7 +1,7 @@
 <?php
 /**
  * Automatic acknowledgement sent to the person who submitted an inquiry.
- * Variables: $inquiry (array), $typeLabel (string), $reference (string), $contact (settings), $e (escaper).
+ * Variables: $inquiry (array), $files (attached uploads), $typeLabel (string), $reference (string), $contact (settings), $e (escaper).
  */
 $whatsapp = preg_replace('/\D/', '', (string) ($contact['whatsapp'] ?? '923104489288'));
 ?>
@@ -14,3 +14,6 @@ $whatsapp = preg_replace('/\D/', '', (string) ($contact['whatsapp'] ?? '92310448
 </p>
 <p style="margin:0;color:#5c6170;font-size:13px;">Your message:</p>
 <p style="margin:6px 0 0;padding:12px 14px;background:#fbfaf7;border-radius:10px;font-size:14px;white-space:pre-line;"><?= $e($inquiry['message']) ?></p>
+<?php if ($files !== []): ?>
+<p style="margin:14px 0 0;color:#5c6170;font-size:13px;">Files we received: <?= $e(implode(', ', array_map(static fn (array $file): string => $file['name'], $files))) ?></p>
+<?php endif; ?>

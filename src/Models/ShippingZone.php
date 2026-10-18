@@ -8,11 +8,12 @@ use App\Core\Database;
 
 /**
  * Freight rates: countries are grouped into zones, and each zone has rate bands per mode.
- * Air bands start at a chargeable weight (kg); sea bands start at a volume (CBM).
+ * Air bands start at a chargeable weight (kg); sea bands start at a volume (CBM);
+ * courier bands (samples) start at a number of pieces.
  */
 final class ShippingZone
 {
-    public const MODES = ['air', 'sea'];
+    public const MODES = ['air', 'sea', 'courier'];
 
     public function __construct(private readonly Database $db)
     {

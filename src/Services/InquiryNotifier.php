@@ -18,15 +18,17 @@ final class InquiryNotifier
     ) {
     }
 
-    /** @param array<string, mixed> $inquiry */
+    /** @param array<string, mixed> $inquiry with "files" (attached uploads) when there are any */
     public function notify(int $id, array $inquiry): void
     {
         $typeLabel = Inquiry::TYPES[$inquiry['type']] ?? 'Message';
         $reference = Inquiry::reference($id);
         $data = [
             'inquiry' => $inquiry,
+            'files' => $inquiry['files'] ?? [],
             'typeLabel' => $typeLabel,
             'reference' => $reference,
+            'adminUrl' => rtrim($this->config->string('web.url'), '/') . "/admin/inquiries/{$id}",
             'contact' => $this->settings->get('contact', []),
             'addresses' => $this->settings->get('addresses', []),
         ];

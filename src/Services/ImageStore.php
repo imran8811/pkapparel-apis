@@ -168,6 +168,23 @@ final class ImageStore
         return $info === false ? null : ['width' => (int) $info[0], 'height' => (int) $info[1]];
     }
 
+    /**
+     * Adds the real width and height to uploaded images in rich text that lack them (e.g. posts imported from the old
+     * site), so browsers keep their space free while loading and the website can serve them at the size needed.
+     */
+    public function withSizes(string $html): string
+    {
+        return (string) preg_replace_callback('~<img\b[^>]*>~i', function (array $match): string {
+            $tag = $match[0];
+            if (preg_match('~\swidth="~i', $tag) === 1 || preg_match('~\ssrc="/?(uploads/[^"]+)"~i', $tag, $src) !== 1) {
+                return $tag;
+            }
+            $size = $this->dimensions($src[1]);
+
+            return $size === null ? $tag : (string) preg_replace('~^<img\b~i', sprintf('<img width="%d" height="%d"', $size['width'], $size['height']), $tag);
+        }, $html);
+    }
+
     /** The API's public folder (uploads live in public/uploads). */
     private function publicDir(): string
     {

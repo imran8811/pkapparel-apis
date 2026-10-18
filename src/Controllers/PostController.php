@@ -9,10 +9,11 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Validator;
 use App\Models\Post;
+use App\Services\ImageStore;
 
 final class PostController
 {
-    public function __construct(private readonly Post $posts)
+    public function __construct(private readonly Post $posts, private readonly ImageStore $images)
     {
     }
 
@@ -45,6 +46,7 @@ final class PostController
         if ($post === null) {
             throw HttpException::notFound('This article does not exist.');
         }
+        $post['body_html'] = $this->images->withSizes($post['body_html']);
 
         return Response::data($post);
     }

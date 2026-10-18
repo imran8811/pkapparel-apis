@@ -6,22 +6,38 @@ namespace App\Services;
 
 use App\Models\Product;
 use App\Models\ProductColor;
+use App\Models\Review;
 use App\Models\Settings;
 use App\Models\SizeChart;
 
 /**
- * What the shop shows: style cards for lists and full product pages.
- * Order rules a style leaves empty (MOQ, set size, lead time, sample price) come from the "commerce" settings.
+ * What the shop shows: style cards for lists and full product pages (with approved buyer reviews).
+ * Order rules a style leaves empty (MOQ, minimum per size, set size, lead time, sample price) come from the "commerce" settings.
  */
 final class Catalog
 {
     private const SPEC_KEYS = ['fit', 'fabric', 'composition', 'fabric_weight', 'stretch', 'wash', 'closure'];
+
+    /** Reviews shown on a product page. */
+    private const REVIEWS_PER_PRODUCT = 20;
+
+    /**
+     * The old site's sitemap numbered its product links 10051–10076 in order, instead of using the article numbers
+     * (its pages linked the article numbers). Google indexed those links, so each number maps to its article.
+     */
+    private const SITEMAP_NUMBERS = [
+        '10051' => '1051', '10052' => '1052', '10053' => '1053', '10054' => '1054', '10055' => '1055', '10056' => '1056', '10057' => '1057', '10058' => '1058',
+        '10059' => '9650', '10060' => '9651', '10061' => '9652', '10062' => '9653', '10063' => '9654', '10064' => '9655', '10065' => '9656', '10066' => '9657',
+        '10067' => '2230', '10068' => '2231', '10069' => '2232', '10070' => '2233', '10071' => '2234', '10072' => '2235',
+        '10073' => '4333', '10074' => '4334', '10075' => '4335', '10076' => '4336',
+    ];
 
     public function __construct(
         private readonly Product $products,
         private readonly ProductColor $colors,
         private readonly SizeChart $charts,
         private readonly Settings $settings,
+        private readonly Review $reviews,
     ) {
     }
 
@@ -93,6 +109,10 @@ final class Catalog
             'seo_description' => $product['seo_description'],
             'updated_at' => $product['updated_at'],
             'related' => $this->related($product),
+            'reviews' => Reviews::present(
+                $this->reviews->statsForProduct($product['id']),
+                $this->reviews->approvedForProduct($product['id'], self::REVIEWS_PER_PRODUCT),
+            ),
         ];
     }
 
@@ -104,7 +124,8 @@ final class Catalog
      */
     public function legacy(string $article): ?array
     {
-        $match = $this->colors->findByArticle($article);
+        $match = $this->colors->findByArticle($article)
+            ?? (isset(self::SITEMAP_NUMBERS[$article]) ? $this->colors->findByArticle(self::SITEMAP_NUMBERS[$article]) : null);
         $product = $match === null ? null : $this->products->find($match['product_id']);
         if ($match === null || $product === null) {
             return null;
@@ -119,7 +140,7 @@ final class Catalog
         ];
     }
 
-    /** @return array{moq_per_color: int, set_pcs_per_size: int, lead_time_days: int, sample_price_cents: int} */
+    /** @return array{moq_per_color: int, set_pcs_per_size: int, min_pcs_per_size: int, lead_time_days: int, sample_price_cents: int} */
     public function rules(array $product): array
     {
         $commerce = $this->settings->get('commerce', []);
@@ -128,8 +149,9 @@ final class Catalog
         return [
             'moq_per_color' => $product['moq_per_color'] ?? (int) ($commerce['moq_per_color'] ?? 100),
             'set_pcs_per_size' => $product['set_pcs_per_size'] ?? (int) ($commerce['set_pcs_per_size'] ?? 2),
+            'min_pcs_per_size' => $product['min_pcs_per_size'] ?? (int) ($commerce['min_pcs_per_size'] ?? Commerce::MIN_PCS_PER_SIZE),
             'lead_time_days' => $product['lead_time_days'] ?? (int) ($commerce['lead_time_days'] ?? 30),
-            'sample_price_cents' => $product['sample_price_cents'] ?? (int) ($commerce['sample_price_cents'] ?? 5000),
+            'sample_price_cents' => $product['sample_price_cents'] ?? (int) ($commerce['sample_price_cents'] ?? Commerce::SAMPLE_PRICE_CENTS),
         ];
     }
 

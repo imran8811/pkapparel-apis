@@ -4,3 +4,9 @@ Options -Indexes -ExecCGI
 <FilesMatch "\.(?i:php\d?|phtml|phar|pl|py|cgi|sh|asp|aspx|jsp)$">
     Require all denied
 </FilesMatch>
+
+# Uploads get a new name when they are replaced, so browsers may keep them for 30 days
+# (the website passes this header on for /uploads/...).
+<IfModule mod_headers.c>
+    Header set Cache-Control "public, max-age=2592000"
+</IfModule>

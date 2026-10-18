@@ -41,6 +41,14 @@ const ORDER = [
     'jeans-manufacturers-in-pakistan',
 ];
 
+// Sentences with wrong facts, corrected on import (owner decision 2026-10-17). Migration 0024 corrects posts imported before.
+const FACT_FIXES = [
+    'As the best jeans manufacturer in the USA, we deliver superb quality jeans with skillful stitching.'
+        => 'From our factory in Lahore, we make jeans for brands in the USA, Europe and beyond, with skillful stitching and consistent quality.',
+    'At PK Apparel, we work with brands to accommodate flexible order quantities while keeping the '
+        => 'At PK Apparel, the minimum is 100 pieces per color, with at least 20 of each size, while keeping the ',
+];
+
 // Posts without their own picture get a factory photo.
 const FALLBACK_COVERS = [
     'jeans-manufacturers-in-pakistan' => ['site/factory/washing-unit.jpg', 'Washing unit in the PK Apparel factory, Lahore'],
@@ -224,9 +232,13 @@ function prepareArticle(string $html): string
         fixManufacturerTable($xpath, $table);
     }
 
-    // The old phone number also appears as visible link text in one post.
-    foreach (iterator_to_array($xpath->query('//text()[contains(., "301 9062877")]')) as $text) {
-        $text->nodeValue = str_replace('+92 301 9062877', '+92 310 4489288', (string) $text->nodeValue);
+    // The old phone number also appears as visible link text in one post, and two sentences state wrong facts.
+    foreach (iterator_to_array($xpath->query('//text()')) as $text) {
+        $value = (string) $text->nodeValue;
+        $fixed = strtr($value, ['+92 301 9062877' => '+92 310 4489288'] + FACT_FIXES);
+        if ($fixed !== $value) {
+            $text->nodeValue = $fixed;
+        }
     }
 
     // Number cards (a row of boxes with a big value and a small label) become a list: "1.30 m Men's Jeans".

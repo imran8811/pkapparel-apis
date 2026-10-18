@@ -49,6 +49,17 @@ final class OrderFlowTest extends OrderTestCase
         self::assertFalse($cart['data']['can_checkout']);
         self::assertStringContainsString('needs 35 more pieces', implode(' ', $cart['data']['issues']));
 
+        // Every size needs at least 20 pieces (the business default), even when the color reaches its minimum of 60.
+        $uneven = $this->send('PUT', "/v1/cart/lines/{$this->colorA}", ['size_qty' => ['S' => 40, 'M' => 10, 'L' => 10]], null, $cartToken)->decoded()['data'];
+        self::assertSame(['M', 'L'], $uneven['styles'][0]['colors'][0]['small_sizes']);
+        self::assertFalse($uneven['styles'][0]['colors'][0]['below_moq']);
+        self::assertFalse($uneven['can_checkout']);
+        self::assertStringContainsString('each size needs at least 20 pieces. Raise or remove size M, L.', implode(' ', $uneven['issues']));
+        // A style can set its own minimum per size.
+        $this->db->execute('UPDATE products SET min_pcs_per_size = 10 WHERE id = ?', [$this->productId]);
+        self::assertTrue($this->send('GET', '/v1/cart', null, null, $cartToken)->decoded()['data']['can_checkout']);
+        $this->db->execute('UPDATE products SET min_pcs_per_size = NULL WHERE id = ?', [$this->productId]);
+
         $set = $this->send('PUT', "/v1/cart/lines/{$this->colorA}", ['size_qty' => ['S' => 20, 'M' => 20, 'L' => 20]], null, $cartToken)->decoded()['data'];
         self::assertSame(60, $set['total_pcs']);
         self::assertTrue($set['can_checkout']);

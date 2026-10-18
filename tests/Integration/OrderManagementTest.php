@@ -282,7 +282,8 @@ final class OrderManagementTest extends OrderTestCase
         $job = $this->app->container->get(DailyJob::class);
         $orders = $this->app->container->get(\App\Models\Order::class);
         $today = Format::local()->setTime(0, 0);
-        $placedDaysAgo = fn (int $days) => $this->db->execute('UPDATE orders SET placed_at = UTC_TIMESTAMP() - INTERVAL ? DAY WHERE id = ?', [$days, $orderId]);
+        // A bulk order is payable from the moment it is placed (priced_at = placed_at).
+        $placedDaysAgo = fn (int $days) => $this->db->execute('UPDATE orders SET placed_at = UTC_TIMESTAMP() - INTERVAL ? DAY, priced_at = placed_at WHERE id = ?', [$days, $orderId]);
 
         self::assertNull($job->handleUnpaid((array) $orders->find($orderId), $today), 'Nothing on the first days');
         $placedDaysAgo(3);

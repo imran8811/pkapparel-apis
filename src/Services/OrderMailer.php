@@ -35,7 +35,7 @@ final class OrderMailer
             "Your order {$order['order_no']} and proforma invoice | PK Apparel",
             $this->mailer->render('order-placed-customer', $data + ['preheader' => sprintf('Deposit due: %s. Bank details and your proforma invoice are inside.', Format::money($order['amounts']['due_now_cents']))]),
             $this->config->string('mail.admin_to'),
-            [['name' => OrderPdfs::proformaFilename($order['order_no']), 'content' => $pdf, 'type' => 'application/pdf']],
+            [['name' => OrderPdfs::proformaFilename($order['order_no'], $order['kind']), 'content' => $pdf, 'type' => 'application/pdf']],
         );
 
         $this->mailer->send(
@@ -44,6 +44,45 @@ final class OrderMailer
             $this->mailer->render('order-placed-admin', $data + ['preheader' => sprintf('%d pcs, %s', $order['total_pcs'], $order['shipping_mode_label'])]),
             (string) $order['customer']['email'],
         );
+    }
+
+    /**
+     * Sample order placed. Priced: the buyer gets the sample invoice (attached) and the bank details.
+     * Waiting for our price: the buyer is told that the invoice follows. Staff get a summary either way.
+     *
+     * @param array<string, mixed> $order buyer's view of the order
+     * @param array<string, mixed> $staffView staff view (with ids)
+     */
+    public function samplePlaced(array $order, array $staffView): void
+    {
+        $links = $this->links($order['order_no'], $staffView['id']);
+        if ($order['status'] === 'awaiting_price') {
+            $this->toBuyer($order, "We received your sample order {$order['order_no']}", [
+                'title' => 'Thank you for your sample order',
+                'intro' => sprintf('We are confirming the price of %s and will email you the sample invoice within 1 to 2 working days.', self::toPrice($order)),
+                'facts' => ['Order' => $order['order_no'], 'Samples' => sprintf('%d pcs', $order['total_pcs']), 'Deliver to' => self::destination($order)],
+                'button' => ['label' => 'View your order', 'url' => $links['order']],
+            ]);
+        } else {
+            $this->sampleInvoice($order, "Your sample order {$order['order_no']} and invoice", 'Thank you for your sample order');
+        }
+
+        $this->mailer->send(
+            $this->config->string('mail.admin_to'),
+            sprintf('[%s] New sample order from %s%s', $order['order_no'], $order['customer']['company_name'], $order['status'] === 'awaiting_price' ? ', needs a price' : ', ' . Format::money($order['amounts']['total_cents'])),
+            $this->mailer->render('order-placed-admin', $this->layoutData() + ['order' => $order, 'links' => $links, 'preheader' => sprintf('%d sample pcs to %s', $order['total_pcs'], self::destination($order))]),
+            (string) $order['customer']['email'],
+        );
+    }
+
+    /**
+     * Staff priced a sample order: the buyer gets the sample invoice and the bank details.
+     *
+     * @param array<string, mixed> $order buyer's view
+     */
+    public function samplePriced(array $order): void
+    {
+        $this->sampleInvoice($order, "Your sample invoice for order {$order['order_no']}", 'Your sample order is ready to pay');
     }
 
     /**
@@ -93,16 +132,28 @@ final class OrderMailer
     {
         $outstanding = max(0, $order['amounts']['total_cents'] - $order['amounts']['paid_cents']);
         $paragraphs = [];
-        if ($productionStarted) {
+        if ($productionStarted && self::isSample($order)) {
+            $paragraphs[] = sprintf(
+                'We are preparing your samples. They are due to be ready on %s, and we will email you the tracking as soon as they ship.',
+                Format::date($order['production_due_on']),
+            );
+        } elseif ($productionStarted) {
             $paragraphs[] = sprintf(
                 'Production of your order has started. It is due to be ready on %s. We will keep you posted on each step, with photos, on your order page.',
                 Format::date($order['production_due_on']),
             );
         } elseif ($outstanding > 0 && $payment['kind'] === 'deposit' && $order['status'] !== 'confirmed') {
-            $paragraphs[] = 'This does not cover the full deposit yet. Please send the rest, or contact us if you think this is a mistake.';
+            $paragraphs[] = sprintf('This does not cover the full %s yet. Please send the rest, or contact us if you think this is a mistake.', self::isSample($order) ? 'amount' : 'deposit');
         }
         if ($payment['kind'] === 'balance' && $outstanding === 0) {
             $paragraphs[] = 'Your order is now paid in full. We will let you know as soon as it ships.';
+        }
+        if ($productionStarted && ($order['credits'] ?? []) !== []) {
+            $paragraphs[] = sprintf(
+                'The cost of your samples (%s) is deducted from the balance: %s.',
+                implode(', ', array_column($order['credits'], 'order_no')),
+                Format::money(array_sum(array_column($order['credits'], 'cents'))),
+            );
         }
 
         $this->toBuyer($order, sprintf('Payment received for %s (receipt %s)', $order['order_no'], $payment['receipt_no']), [
@@ -191,9 +242,12 @@ final class OrderMailer
     public function shipped(array $order): void
     {
         $shipment = $order['shipment'] ?? [];
-        $this->toBuyer($order, "Your order {$order['order_no']} has shipped", [
-            'title' => 'Your order is on its way',
-            'intro' => sprintf('We handed your order to %s. The shipping documents are on your order page.', $shipment['carrier'] ?? 'the carrier'),
+        $sample = self::isSample($order);
+        $this->toBuyer($order, $sample ? "Your samples for order {$order['order_no']} are on their way" : "Your order {$order['order_no']} has shipped", [
+            'title' => $sample ? 'Your samples are on their way' : 'Your order is on its way',
+            'intro' => $sample
+                ? sprintf('We handed your samples to %s.', $shipment['carrier'] ?? 'the courier')
+                : sprintf('We handed your order to %s. The shipping documents are on your order page.', $shipment['carrier'] ?? 'the carrier'),
             'facts' => [
                 'Shipped on' => isset($shipment['shipped_on']) ? Format::date($shipment['shipped_on']) : null,
                 'Carrier' => $shipment['carrier'] ?? null,
@@ -208,11 +262,64 @@ final class OrderMailer
     /** @param array<string, mixed> $order buyer's view */
     public function delivered(array $order): void
     {
+        if (self::isSample($order)) {
+            $this->toBuyer($order, "Your samples for order {$order['order_no']} were delivered", [
+                'title' => 'Your samples were delivered',
+                'intro' => 'We hope they look and fit the way you want. When you are ready, order the styles in the shop, or reply to this email with any changes you would like.',
+                'button' => ['label' => 'Go to the shop', 'url' => rtrim($this->config->string('web.url'), '/') . '/wholesale-shop'],
+            ]);
+
+            return;
+        }
         $this->toBuyer($order, "Your order {$order['order_no']} was delivered", [
             'title' => 'Your order was delivered',
             'intro' => 'Thank you for ordering from PK Apparel. We hope the goods sell well. If anything is not right, reply to this email and we will sort it out.',
             'button' => ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0)['order']],
         ]);
+    }
+
+    /**
+     * A week after delivery: the buyer is asked for a review (the link works without logging in).
+     *
+     * @param array<string, mixed> $order buyer's view
+     */
+    public function reviewRequest(array $order, string $token): void
+    {
+        $url = rtrim($this->config->string('web.url'), '/') . '/review?token=' . $token;
+        $this->toBuyer($order, "How did order {$order['order_no']} go?", [
+            'title' => 'How did your order go?',
+            'intro' => 'Your order was delivered a week ago. Would you tell other buyers how it went? It takes a minute, and it helps us a lot.',
+            'paragraphs' => [
+                'You choose whether your review shows your company name, or only your type of business and country.',
+                "If the button does not work, copy this address into your browser: {$url}",
+            ],
+            'button' => ['label' => 'Write a review', 'url' => $url],
+        ]);
+    }
+
+    /**
+     * Staff are told about a new review, which waits for their approval.
+     *
+     * @param array<string, mixed> $staffView
+     */
+    public function reviewSubmitted(array $staffView, int $rating, string $body): void
+    {
+        $web = rtrim($this->config->string('web.url'), '/');
+        $this->mailer->send(
+            $this->config->string('mail.admin_to'),
+            sprintf('[%s] New review from %s: %d of 5', $staffView['order_no'], $staffView['customer']['company_name'], $rating),
+            $this->mailer->render('order-update', [
+                'order' => $staffView,
+                'title' => 'A buyer reviewed their order',
+                'intro' => $body,
+                'facts' => ['Order' => $staffView['order_no'], 'Rating' => str_repeat('★', $rating) . str_repeat('☆', 5 - $rating)],
+                'paragraphs' => ['The review appears on the website once you approve it in the admin (Buyer reviews).'],
+                'button' => ['label' => 'Review it in the admin', 'url' => "{$web}/admin/reviews?tab=orders"],
+                'bank' => false,
+                'preheader' => 'A review waits for your approval.',
+            ] + $this->layoutData()),
+            (string) $staffView['customer']['email'],
+        );
     }
 
     /**
@@ -237,10 +344,14 @@ final class OrderMailer
      */
     public function paymentReminder(array $order, int $number, string $cancelOn): void
     {
-        $this->toBuyer($order, "Reminder: deposit for order {$order['order_no']}", [
-            'title' => 'Your order is waiting for the deposit',
-            'intro' => sprintf('We have not received the deposit of %s for your order yet. Production starts as soon as it arrives.', Format::money($order['amounts']['due_now_cents'])),
-            'facts' => ['Deposit due' => Format::money($order['amounts']['due_now_cents']), 'Payment reference' => $order['order_no']],
+        $sample = self::isSample($order);
+        $due = Format::money($order['amounts']['due_now_cents']);
+        $this->toBuyer($order, $sample ? "Reminder: payment for sample order {$order['order_no']}" : "Reminder: deposit for order {$order['order_no']}", [
+            'title' => $sample ? 'Your sample order is waiting for the payment' : 'Your order is waiting for the deposit',
+            'intro' => $sample
+                ? sprintf('We have not received the payment of %s for your sample order yet. We prepare your samples as soon as it arrives.', $due)
+                : sprintf('We have not received the deposit of %s for your order yet. Production starts as soon as it arrives.', $due),
+            'facts' => [($sample ? 'Payment due' : 'Deposit due') => $due, 'Payment reference' => $order['order_no']],
             'paragraphs' => array_values(array_filter([
                 $number >= 2 ? sprintf('If we do not receive it by %s, the order is cancelled automatically. If you have already paid, please report the transfer so we can match it.', Format::date($cancelOn)) : null,
                 'Already paid? Tell us the transaction ID on the Confirm payment page. Changed your mind? You can cancel the order on your order page.',
@@ -255,7 +366,7 @@ final class OrderMailer
     {
         $this->toBuyer($order, "Order {$order['order_no']} was cancelled", [
             'title' => 'Your order was cancelled',
-            'intro' => 'We did not receive the deposit within 30 days, so the order was cancelled automatically. Nothing else needs to be done.',
+            'intro' => sprintf('We did not receive the %s within 30 days, so the order was cancelled automatically. Nothing else needs to be done.', self::isSample($order) ? 'payment' : 'deposit'),
             'paragraphs' => ['If you still want these goods, place a new order in the shop, or reply to this email and we will help.'],
             'button' => ['label' => 'Go to the shop', 'url' => rtrim($this->config->string('web.url'), '/') . '/wholesale-shop'],
         ]);
@@ -271,6 +382,8 @@ final class OrderMailer
         $web = rtrim($this->config->string('web.url'), '/');
         $parts = array_filter([
             $summary['payments'] !== [] ? count($summary['payments']) . ' to check' : null,
+            ($summary['toPrice'] ?? []) !== [] ? count($summary['toPrice']) . ' to price' : null,
+            ($summary['reviews'] ?? 0) > 0 ? $summary['reviews'] . ($summary['reviews'] === 1 ? ' review' : ' reviews') . ' to approve' : null,
             $summary['late'] !== [] ? count($summary['late']) . ' late' : null,
             $summary['cancelled'] !== [] ? count($summary['cancelled']) . ' cancelled' : null,
         ]);
@@ -299,6 +412,62 @@ final class OrderMailer
             $this->config->string('mail.admin_to'),
             $attachments,
         );
+    }
+
+    /**
+     * A priced sample order: the sample invoice (attached), the amount, the bank details and the next steps.
+     *
+     * @param array<string, mixed> $order buyer's view (with bank details)
+     */
+    private function sampleInvoice(array $order, string $subject, string $title): void
+    {
+        $amounts = $order['amounts'];
+        $pdf = $this->pdfs->proforma($order, $this->bankOrNull($order));
+        $this->toBuyer($order, $subject, [
+            'title' => $title,
+            'intro' => sprintf('Please pay %s by bank transfer, so we can prepare your samples. Your sample invoice is attached.', Format::money($amounts['due_now_cents'])),
+            'facts' => [
+                'Samples' => sprintf('%d pcs, %s', $order['total_pcs'], Format::money($amounts['goods_cents'] + $amounts['addons_cents'])),
+                'Courier' => $amounts['freight_cents'] === null ? null : Format::money((int) $amounts['freight_cents']),
+                'Total' => Format::money($amounts['total_cents']),
+                'Payment reference' => $order['order_no'],
+            ],
+            'paragraphs' => [
+                sprintf('After the transfer, tell us the transaction ID on the Confirm payment page. Your samples are ready about %d days after the payment is confirmed, then go by express courier with tracking.', $order['lead_time_days']),
+            ],
+            'bank' => $this->bankOrNull($order),
+            'button' => ['label' => 'Confirm payment', 'url' => $this->links($order['order_no'], 0)['confirm_payment']],
+        ], [['name' => OrderPdfs::proformaFilename($order['order_no'], 'sample'), 'content' => $pdf, 'type' => 'application/pdf']]);
+    }
+
+    /** @param array<string, mixed> $order */
+    private static function isSample(array $order): bool
+    {
+        return ($order['kind'] ?? 'bulk') === 'sample';
+    }
+
+    /**
+     * "the courier to Germany and your custom-design sample": what staff still have to price.
+     *
+     * @param array<string, mixed> $order presented order
+     */
+    private static function toPrice(array $order): string
+    {
+        $parts = [];
+        if ($order['amounts']['freight_status'] === 'quoted') {
+            $parts[] = 'the courier to ' . Format::country($order['address']['country_code'] ?? null);
+        }
+        if ($order['amounts']['has_quoted_addons']) {
+            $parts[] = 'your custom-design sample';
+        }
+
+        return $parts === [] ? 'your samples' : implode(' and ', $parts);
+    }
+
+    /** @param array<string, mixed> $order presented order */
+    private static function destination(array $order): string
+    {
+        return trim(($order['address']['city'] ?? '') . ', ' . Format::country($order['address']['country_code'] ?? null), ', ');
     }
 
     /**

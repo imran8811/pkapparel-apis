@@ -25,7 +25,9 @@ final class OrderPdfs
      */
     public function proforma(array $order, ?array $bank): string
     {
-        return $this->render('proforma-invoice', ['order' => $order, 'bank' => $bank, 'document' => ['kind' => 'proforma']], 'Proforma invoice ' . $order['order_no']);
+        $title = (($order['kind'] ?? 'bulk') === 'sample' ? 'Sample invoice ' : 'Proforma invoice ') . $order['order_no'];
+
+        return $this->render('proforma-invoice', ['order' => $order, 'bank' => $bank, 'document' => ['kind' => 'proforma']], $title);
     }
 
     /**
@@ -52,9 +54,10 @@ final class OrderPdfs
         return $this->render('receipt', ['order' => $order, 'payment' => $payment], 'Receipt ' . $payment['receipt_no']);
     }
 
-    public static function proformaFilename(string $orderNo): string
+    /** "PI-PK-261016-482.pdf", or "Sample-invoice-PK-261016-482.pdf" for a sample order. */
+    public static function proformaFilename(string $orderNo, string $kind = 'bulk'): string
     {
-        return 'PI-' . $orderNo . '.pdf';
+        return ($kind === 'sample' ? 'Sample-invoice-' : 'PI-') . $orderNo . '.pdf';
     }
 
     public static function invoiceFilename(string $invoiceNo): string

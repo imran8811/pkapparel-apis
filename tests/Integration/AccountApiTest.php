@@ -23,7 +23,8 @@ final class AccountApiTest extends BuyerApiTestCase
 
     protected function testEmails(): array
     {
-        return [self::EMAIL, self::OTHER, self::NEW_EMAIL];
+        // nobody@… has no account; listing it clears its login and password reset limits between runs.
+        return [self::EMAIL, self::OTHER, self::NEW_EMAIL, 'nobody@example.test'];
     }
 
     public function testSignupCreatesAnUnverifiedAccountAndLogsIn(): void

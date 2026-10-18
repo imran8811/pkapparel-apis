@@ -8,10 +8,11 @@ use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
 use App\Models\Page;
+use App\Services\ImageStore;
 
 final class PageController
 {
-    public function __construct(private readonly Page $pages)
+    public function __construct(private readonly Page $pages, private readonly ImageStore $images)
     {
     }
 
@@ -22,6 +23,7 @@ final class PageController
         if ($page === null) {
             throw HttpException::notFound('This page does not exist.');
         }
+        $page['body_html'] = $this->images->withSizes($page['body_html']);
 
         return Response::data($page);
     }

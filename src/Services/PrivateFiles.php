@@ -9,15 +9,22 @@ use App\Core\HttpException;
 use App\Core\ValidationException;
 
 /**
- * Private uploads under storage/private, never served directly: payment slips, order documents and
- * production photos. Photos are re-encoded (ImageStore); PDFs are checked by their signature.
+ * Private uploads under storage/private, never served directly: payment slips, order documents,
+ * production photos and files buyers attach to requests (inquiries). Photos are re-encoded (ImageStore);
+ * PDFs and Office files are checked by their content.
  * The website accepts at most 4.5 MB per request (Vercel), hence the 4 MB limit.
  */
 final class PrivateFiles
 {
     public const MAX_BYTES = 4 * 1024 * 1024;
 
-    private const FOLDERS = ['payment-slips', 'documents', 'production'];
+    private const FOLDERS = ['payment-slips', 'documents', 'production', 'inquiries'];
+
+    /** Office files buyers may attach: extension => [the package's main part, MIME type]. */
+    private const OFFICE = [
+        'xlsx' => ['xl/workbook.xml', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+        'docx' => ['word/document.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ];
 
     public function __construct(private readonly Config $config, private readonly ImageStore $images)
     {
@@ -39,30 +46,36 @@ final class PrivateFiles
         [$tmp, $name] = $file;
 
         if ($allowPdf && self::isPdf($tmp)) {
-            $relative = sprintf('%s/%s/%s-%s.pdf', $folder, gmdate('Y/m'), self::prefix($folder), bin2hex(random_bytes(12)));
-            $target = $this->baseDir() . '/' . $relative;
-            if (!is_dir(dirname($target)) && !mkdir(dirname($target), 0775, true) && !is_dir(dirname($target))) {
-                throw new \RuntimeException('Could not create the folder ' . dirname($target));
-            }
-            if (!copy($tmp, $target)) {
-                throw new \RuntimeException('Could not save the file to ' . $target);
-            }
-
-            return ['path' => $relative, 'name' => $name, 'type' => 'application/pdf', 'size' => (int) filesize($target)];
+            return $this->copy($tmp, $name, $folder, 'pdf', 'application/pdf');
         }
 
-        try {
-            $image = $this->images->storePrivate($tmp, self::prefix($folder), $folder, self::MAX_BYTES);
-        } catch (ValidationException) {
-            throw new ValidationException([$field => $allowPdf ? 'Attach a photo (JPG or PNG) or a PDF.' : 'Attach a photo (JPG or PNG).']);
+        return $this->storeImage($tmp, $name, $folder, $field, $allowPdf ? 'Attach a photo (JPG or PNG) or a PDF.' : 'Attach a photo (JPG or PNG).');
+    }
+
+    /**
+     * Stores a file a buyer attaches to a request: a PDF (Illustrator files saved with PDF content count too),
+     * an Excel or Word file (.xlsx, .docx; files with macros are refused), or a photo.
+     *
+     * @param array<string, mixed>|null $upload one entry of $_FILES, or null when nothing was attached
+     * @return array{path: string, name: string, type: string, size: int}|null null when no file was attached
+     */
+    public function storeAttachment(?array $upload, string $folder, string $field): ?array
+    {
+        $file = $this->checkedUpload($upload, $folder, $field);
+        if ($file === null) {
+            return null;
+        }
+        [$tmp, $name] = $file;
+
+        if (self::isPdf($tmp)) {
+            return $this->copy($tmp, $name, $folder, 'pdf', 'application/pdf');
+        }
+        $office = self::officeType($tmp);
+        if ($office !== null) {
+            return $this->copy($tmp, $name, $folder, $office, self::OFFICE[$office][1]);
         }
 
-        return [
-            'path' => $image['path'],
-            'name' => $name,
-            'type' => str_ends_with($image['path'], '.png') ? 'image/png' : 'image/jpeg',
-            'size' => $image['size'],
-        ];
+        return $this->storeImage($tmp, $name, $folder, $field, 'Attach a PDF, Excel, Word or Illustrator file, or a photo (JPG or PNG).');
     }
 
     /**
@@ -109,11 +122,94 @@ final class PrivateFiles
 
     public static function mimeFor(string $path): string
     {
-        return match (strtolower(pathinfo($path, PATHINFO_EXTENSION))) {
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+
+        return match ($extension) {
             'pdf' => 'application/pdf',
             'png' => 'image/png',
+            'xlsx', 'docx' => self::OFFICE[$extension][1],
             default => 'image/jpeg',
         };
+    }
+
+    /**
+     * Copies a checked file (PDF or Office) into the folder under a random name.
+     *
+     * @return array{path: string, name: string, type: string, size: int}
+     */
+    private function copy(string $tmp, string $name, string $folder, string $extension, string $type): array
+    {
+        $relative = sprintf('%s/%s/%s-%s.%s', $folder, gmdate('Y/m'), self::prefix($folder), bin2hex(random_bytes(12)), $extension);
+        $target = $this->baseDir() . '/' . $relative;
+        if (!is_dir(dirname($target)) && !mkdir(dirname($target), 0775, true) && !is_dir(dirname($target))) {
+            throw new \RuntimeException('Could not create the folder ' . dirname($target));
+        }
+        if (!copy($tmp, $target)) {
+            throw new \RuntimeException('Could not save the file to ' . $target);
+        }
+
+        return ['path' => $relative, 'name' => $name, 'type' => $type, 'size' => (int) filesize($target)];
+    }
+
+    /**
+     * Re-encodes a photo into the folder; anything that is not a photo gets this error message.
+     *
+     * @return array{path: string, name: string, type: string, size: int}
+     */
+    private function storeImage(string $tmp, string $name, string $folder, string $field, string $error): array
+    {
+        try {
+            $image = $this->images->storePrivate($tmp, self::prefix($folder), $folder, self::MAX_BYTES);
+        } catch (ValidationException) {
+            throw new ValidationException([$field => $error]);
+        }
+
+        return [
+            'path' => $image['path'],
+            'name' => $name,
+            'type' => str_ends_with($image['path'], '.png') ? 'image/png' : 'image/jpeg',
+            'size' => $image['size'],
+        ];
+    }
+
+    /**
+     * "xlsx" or "docx" when the file is such an Office package (a zip with the matching main part and no macros).
+     * Office files need PHP's zip extension to be checked; without it they are refused.
+     */
+    private static function officeType(string $file): ?string
+    {
+        $handle = fopen($file, 'rb');
+        $head = $handle === false ? '' : (string) fread($handle, 4);
+        if ($handle !== false) {
+            fclose($handle);
+        }
+        if ($head !== "PK\x03\x04" || !class_exists(\ZipArchive::class)) {
+            return null;
+        }
+
+        $zip = new \ZipArchive();
+        if ($zip->open($file, \ZipArchive::RDONLY) !== true) {
+            return null;
+        }
+        try {
+            if ($zip->locateName('[Content_Types].xml') === false) {
+                return null;
+            }
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                if (str_ends_with(strtolower((string) $zip->getNameIndex($i)), 'vbaproject.bin')) {
+                    return null; // macros
+                }
+            }
+            foreach (self::OFFICE as $extension => [$mainPart]) {
+                if ($zip->locateName($mainPart) !== false) {
+                    return $extension;
+                }
+            }
+
+            return null;
+        } finally {
+            $zip->close();
+        }
     }
 
     /**
@@ -164,6 +260,7 @@ final class PrivateFiles
         return match ($folder) {
             'payment-slips' => 'slip',
             'documents' => 'doc',
+            'inquiries' => 'file',
             default => 'photo',
         };
     }
@@ -171,7 +268,7 @@ final class PrivateFiles
     private function resolve(string $path): ?string
     {
         $folders = implode('|', self::FOLDERS);
-        if (preg_match('#^(?:' . $folders . ')/\d{4}/\d{2}/[a-z0-9-]+\.(?:pdf|jpg|png)$#', $path) !== 1) {
+        if (preg_match('#^(?:' . $folders . ')/\d{4}/\d{2}/[a-z0-9-]+\.(?:pdf|jpg|png|xlsx|docx)$#', $path) !== 1) {
             return null;
         }
 

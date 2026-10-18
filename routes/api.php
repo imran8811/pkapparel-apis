@@ -8,8 +8,11 @@ use App\Controllers\CartController;
 use App\Controllers\ContentController;
 use App\Controllers\HealthController;
 use App\Controllers\InquiryController;
+use App\Controllers\InquiryFileController;
 use App\Controllers\PageController;
 use App\Controllers\PostController;
+use App\Controllers\RedirectController;
+use App\Controllers\ReviewController;
 use App\Controllers\ShopController;
 use App\Controllers\SiteController;
 use App\Core\Router;
@@ -48,8 +51,17 @@ return static function (Router $router): void {
         $router->get('/products/{slug:[a-z0-9-]+}', [ShopController::class, 'product']);
         $router->get('/shop/categories', [ShopController::class, 'categories']);
 
-        // Website forms
+        // Website forms (files are uploaded one at a time before the form is sent)
         $router->post('/inquiries', [InquiryController::class, 'store']);
+        $router->post('/inquiry-files', [InquiryFileController::class, 'store']);
+
+        // Reviews of delivered orders, from the emailed link
+        $router->get('/reviews/{token:[a-f0-9]+}', [ReviewController::class, 'show']);
+        $router->post('/reviews/{token:[a-f0-9]+}', [ReviewController::class, 'store']);
+
+        // Redirects the website follows, and missing addresses reported by its "page not found" page
+        $router->get('/redirects', [RedirectController::class, 'index']);
+        $router->post('/missing-pages', [RedirectController::class, 'missing']);
 
         // Cart (guests and buyers)
         $router->group('/cart', static function (Router $router): void {
@@ -79,6 +91,8 @@ return static function (Router $router): void {
             $router->delete('/addresses/{id:\d+}', [Account\AddressController::class, 'destroy']);
 
             $router->get('/checkout', [Account\OrderController::class, 'checkout']);
+            $router->post('/sample-orders/quote', [Account\SampleOrderController::class, 'quote']);
+            $router->post('/sample-orders', [Account\SampleOrderController::class, 'store']);
             $router->get('/orders', [Account\OrderController::class, 'index']);
             $router->post('/orders', [Account\OrderController::class, 'store']);
             $router->get('/orders/{orderNo:PK-[0-9-]+}', [Account\OrderController::class, 'show']);
@@ -89,6 +103,8 @@ return static function (Router $router): void {
             $router->get('/orders/{orderNo:PK-[0-9-]+}/receipts/{receiptNo:RCPT-[0-9-]+}', [Account\OrderController::class, 'receipt']);
             $router->get('/orders/{orderNo:PK-[0-9-]+}/documents/{id:\d+}', [Account\OrderController::class, 'document']);
             $router->get('/orders/{orderNo:PK-[0-9-]+}/photos/{id:\d+}', [Account\OrderController::class, 'photo']);
+            $router->get('/orders/{orderNo:PK-[0-9-]+}/review', [Account\ReviewController::class, 'show']);
+            $router->post('/orders/{orderNo:PK-[0-9-]+}/review', [Account\ReviewController::class, 'store']);
         }, [RequireCustomer::class]);
 
         // Admin panel
@@ -100,10 +116,26 @@ return static function (Router $router): void {
             $router->put('/auth/password', [Admin\AuthController::class, 'changePassword']);
 
             $router->get('/dashboard', [Admin\DashboardController::class, 'show']);
+            $router->get('/launch-checklist', [Admin\LaunchChecklistController::class, 'show']);
+            $router->put('/launch-checklist/{key:[a-z_]+}', [Admin\LaunchChecklistController::class, 'tick']);
 
             $router->get('/inquiries', [Admin\InquiryController::class, 'index']);
             $router->get('/inquiries/{id:\d+}', [Admin\InquiryController::class, 'show']);
             $router->patch('/inquiries/{id:\d+}', [Admin\InquiryController::class, 'update']);
+            $router->get('/inquiry-files/{id:\d+}', [Admin\InquiryController::class, 'file']);
+
+            $router->get('/reviews', [Admin\ReviewController::class, 'index']);
+            $router->post('/reviews/{id:\d+}/approve', [Admin\ReviewController::class, 'approve']);
+            $router->post('/reviews/{id:\d+}/hide', [Admin\ReviewController::class, 'hide']);
+            $router->post('/reviews/{id:\d+}/feature', [Admin\ReviewController::class, 'feature']);
+
+            $router->get('/redirects', [Admin\RedirectController::class, 'index']);
+            $router->post('/redirects', [Admin\RedirectController::class, 'store']);
+            $router->put('/redirects/{id:\d+}', [Admin\RedirectController::class, 'update']);
+            $router->delete('/redirects/{id:\d+}', [Admin\RedirectController::class, 'destroy']);
+            $router->get('/missing-pages', [Admin\RedirectController::class, 'missing']);
+            $router->post('/missing-pages/{id:\d+}/ignore', [Admin\RedirectController::class, 'ignore']);
+            $router->post('/missing-pages/{id:\d+}/restore', [Admin\RedirectController::class, 'restore']);
 
             foreach (['faqs' => Admin\FaqController::class, 'testimonials' => Admin\TestimonialController::class, 'certifications' => Admin\CertificationController::class] as $path => $controller) {
                 $router->get("/{$path}", [$controller, 'index']);
@@ -157,6 +189,7 @@ return static function (Router $router): void {
             $router->put('/orders/{id:\d+}/due-date', [Admin\OrderController::class, 'dueDate']);
             $router->put('/orders/{id:\d+}/charges', [Admin\OrderController::class, 'charges']);
             $router->post('/orders/{id:\d+}/ready-to-ship', [Admin\OrderController::class, 'readyToShip']);
+            $router->post('/orders/{id:\d+}/send-price', [Admin\OrderController::class, 'sendPrice']);
             $router->post('/orders/{id:\d+}/ship', [Admin\OrderController::class, 'ship']);
             $router->post('/orders/{id:\d+}/deliver', [Admin\OrderController::class, 'deliver']);
             $router->post('/orders/{id:\d+}/notes', [Admin\OrderController::class, 'note']);

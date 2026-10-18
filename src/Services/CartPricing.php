@@ -12,7 +12,8 @@ use App\Models\ProductColor;
  *
  * - The price per piece is the color's price (or the style's), less any volume-tier discount.
  *   Tiers count every color of a style together, like on the product page.
- * - Each color must reach the style's minimum (MOQ). Colors and styles no longer sold block checkout.
+ * - Each color must reach the style's minimum (MOQ), and every size ordered in a color needs the minimum per size
+ *   (e.g. 20: 100 pieces of a color cover at most 5 sizes). Colors and styles no longer sold block checkout.
  * - Quantities for sizes a style no longer offers are left out (and reported).
  */
 final class CartPricing
@@ -61,7 +62,7 @@ final class CartPricing
         }
 
         $colorLines = array_merge(...array_map(static fn (array $s): array => $s['colors'], $styles ?: [['colors' => []]]));
-        $blocked = array_filter($colorLines, static fn (array $c): bool => !$c['available'] || $c['below_moq']);
+        $blocked = array_filter($colorLines, static fn (array $c): bool => !$c['available'] || $c['below_moq'] || $c['small_sizes'] !== []);
         $totalPcs = array_sum(array_map(static fn (array $s): int => $s['pcs'], $styles));
 
         return [
@@ -127,6 +128,10 @@ final class CartPricing
             $isAvailable = $available($entry);
             $unit = max(0, ($color['price_cents'] ?? $product['price_cents']) - $discount);
             $belowMoq = $isAvailable && $entry['pcs'] < $rules['moq_per_color'];
+            // Sizes ordered below the minimum per size.
+            $smallSizes = $isAvailable
+                ? array_values(array_map('strval', array_keys(array_filter($entry['size_qty'], static fn (int $qty): bool => $qty < $rules['min_pcs_per_size']))))
+                : [];
             if (!$isAvailable) {
                 $issues[] = sprintf('%s in %s is no longer available. Remove it to check out.', $product['name'], $color['name']);
             } elseif ($belowMoq) {
@@ -136,6 +141,15 @@ final class CartPricing
                     $color['name'],
                     $rules['moq_per_color'] - $entry['pcs'],
                     $rules['moq_per_color'],
+                );
+            }
+            if ($smallSizes !== []) {
+                $issues[] = sprintf(
+                    '%s in %s: each size needs at least %d pieces. Raise or remove size %s.',
+                    $product['name'],
+                    $color['name'],
+                    $rules['min_pcs_per_size'],
+                    implode(', ', $smallSizes),
                 );
             }
             $colorLines[] = [
@@ -151,6 +165,7 @@ final class CartPricing
                 'line_cents' => $isAvailable ? $unit * $entry['pcs'] : 0,
                 'available' => $isAvailable,
                 'below_moq' => $belowMoq,
+                'small_sizes' => $smallSizes,
             ];
         }
 
