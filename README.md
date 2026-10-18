@@ -15,6 +15,8 @@ Every request needs the shared `X-Client-Key`. Buyer account routes also need a 
 - **MySQL 8+ or MariaDB 10.4+**, utf8mb4
 - **Composer**
 - **A web server** whose document root is `public/` (Apache with `public/.htaccess`, or LiteSpeed)
+  - Never point the domain at the API folder itself: that would serve the source code, `storage/` and `vendor/`. As a safety net, the folder's own `.htaccess` sends every request into `public/` and turns off folder listings, and `storage/.htaccess` refuses all access.
+  - Create `.env` on the server itself. Don't upload the one from your computer, a zip of the folder, `storage/logs/*` or `tests/`.
 
 ## Set up locally
 
@@ -37,6 +39,7 @@ All of these run from this folder.
 | Admin accounts | `php bin/create-staff.php` (see [Staff accounts](#staff-accounts)) |
 | Daily order emails and clean-up | `php bin/daily.php`, once a day from cron (see [Daily job](#daily-job-cron)) |
 | Send a test email | `php bin/send-test-email.php you@example.com` |
+| Check the shared secrets | `php bin/check-keys.php`: length and fingerprint of `CLIENT_KEY` and `REVALIDATE_SECRET`, without showing them. When the website's build fails with "This API only accepts requests from the PK Apparel website", its log shows the fingerprint of its `API_CLIENT_KEY`: the two must be equal. |
 | Refresh the website's cache | `php bin/revalidate.php <tag> …` (see the tags below) |
 | Import the old blog posts | `php bin/import-legacy-posts.php` |
 | Import the old shop's products | `php bin/import-legacy-products.php` |
@@ -153,7 +156,7 @@ php bin/create-staff.php --name="Your Name" --email=you@example.com --role=admin
   - The daily job deletes addresses nobody has hit for 90 days.
 - **Old shop links:** the old site's sitemap numbered its product links 10051–10076 instead of using the article numbers, and Google indexed them. `App\Services\Catalog::legacy()` maps those numbers to their articles.
 - **Launch checklist** (`App\Services\LaunchChecklist`, admins only): `GET /v1/admin/launch-checklist` lists what is still missing before the shop takes orders.
-  - Most items are checked from the settings and data: legal name, bank details, freight and courier rates, add-on prices, email sending, an admin account with a real email, current certificates, factory numbers, the daily job running.
+  - Most items are checked from the settings and data: legal name, bank details, freight and courier rates, add-on prices, email sending, an admin account with a real email, current certificates, factory numbers, error details hidden (`APP_DEBUG=false`), the daily job running.
   - The rest are ticked by hand with `PUT /v1/admin/launch-checklist/{key}` (`{done}`), stored in the `launch_checklist` setting.
 
 | Folder | What it contains |

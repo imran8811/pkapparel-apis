@@ -1,0 +1,14 @@
+# Safety net. The domain's document root must be public/ (see README). If it points at this folder instead,
+# nothing here may be served: no folder listings, and every request goes into public/, so the source code,
+# .env, storage/ (logs, private files) and vendor/ stay private.
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(?!public/)(.*)$ public/$1 [L]
+</IfModule>
+
+# Without mod_rewrite, refuse everything rather than serve the source.
+<IfModule !mod_rewrite.c>
+    Require all denied
+</IfModule>

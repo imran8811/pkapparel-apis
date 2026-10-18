@@ -186,7 +186,7 @@ final class LaunchTest extends OrderTestCase
         $admin = $this->staffLogin('admin');
         $items = $this->send('GET', '/v1/admin/launch-checklist', null, $admin)->decoded()['data'];
         $byKey = array_column($items, null, 'key');
-        foreach (['company', 'bank', 'freight', 'courier', 'addons', 'email', 'admin', 'certificates', 'factory', 'daily_job', 'legal_review', 'photos', 'search_console', 'test_order'] as $key) {
+        foreach (['company', 'bank', 'freight', 'courier', 'addons', 'email', 'admin', 'certificates', 'factory', 'debug_off', 'daily_job', 'legal_review', 'photos', 'search_console', 'test_order'] as $key) {
             self::assertArrayHasKey($key, $byKey);
         }
         // The test bank details count; the test zone has no courier rate.

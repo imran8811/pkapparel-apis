@@ -9,7 +9,7 @@ $base = dirname(__DIR__);
 return [
     'env' => Env::get('APP_ENV', 'production'),
     'debug' => Env::bool('APP_DEBUG'),
-    'url' => Env::get('APP_URL', 'http://127.0.0.1:8080'),
+    'url' => Env::get('APP_URL', 'https://api.pkapparel.com'),
 
     // Set when the API is served from a sub-folder, e.g. "/api" on shared hosting.
     'base_path' => Env::get('APP_BASE_PATH', ''),
@@ -18,7 +18,7 @@ return [
     'client_key' => Env::get('CLIENT_KEY', ''),
 
     'web' => [
-        'url' => Env::get('WEB_URL', 'http://localhost:3000'),
+        'url' => Env::get('WEB_URL', 'https://www.pkapparel.com'),
         'revalidate_secret' => Env::get('REVALIDATE_SECRET', ''),
         // Set WEB_REVALIDATE=false to skip cache refresh calls (tests, scripts without a running website).
         'revalidate' => Env::bool('WEB_REVALIDATE', true),

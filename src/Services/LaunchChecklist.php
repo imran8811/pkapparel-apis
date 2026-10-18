@@ -105,6 +105,13 @@ final class LaunchChecklist
                 '/admin/settings#factory',
             ),
             self::item(
+                'debug_off',
+                'Error details are hidden from the public',
+                !$this->config->bool('debug'),
+                "Set APP_DEBUG=false in the API's .env file on the live server.",
+                null,
+            ),
+            self::item(
                 'daily_job',
                 'The daily job runs (cron)',
                 is_string($lastRun) && strtotime($lastRun) >= time() - self::DAILY_JOB_HOURS * 3600,

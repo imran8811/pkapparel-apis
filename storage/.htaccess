@@ -1,0 +1,4 @@
+# Logs, caches and private files (payment slips, documents, photos): never served over the web.
+# The API streams private files itself, after checking the login.
+Options -Indexes
+Require all denied
