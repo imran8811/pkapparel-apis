@@ -8,7 +8,7 @@ use App\Core\Format;
 
 $amounts = $order['amounts'];
 $bank = $order['bank'];
-$whatsapp = preg_replace('/\D/', '', (string) ($contact['whatsapp'] ?? '923104489288'));
+$whatsapp = preg_replace('/\D/', '', (string) ($contact['whatsapp'] ?? '923000911000'));
 ?>
 <h1 style="margin:0 0 12px;font-size:20px;">Thank you for your order, <?= $e($order['customer']['contact_name']) ?>.</h1>
 <p style="margin:0 0 6px;">Order number: <strong style="font-family:monospace;font-size:16px;"><?= $e($order['order_no']) ?></strong></p>

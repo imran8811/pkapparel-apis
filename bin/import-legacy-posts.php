@@ -61,7 +61,7 @@ const LINK_MAP = [
     '/men/jeans-pant' => '/wholesale-shop/men/jeans-pant',
     '/women/jeans-pant' => '/wholesale-shop/women/jeans-pant',
     '/men/chino-pant' => '/wholesale-shop/men/chino-pant',
-    'tel:+923019062877' => 'tel:+923104489288',
+    'tel:+923019062877' => 'tel:+923000911000',
 ];
 
 $dryRun = in_array('--dry-run', $argv, true);
@@ -235,7 +235,7 @@ function prepareArticle(string $html): string
     // The old phone number also appears as visible link text in one post, and two sentences state wrong facts.
     foreach (iterator_to_array($xpath->query('//text()')) as $text) {
         $value = (string) $text->nodeValue;
-        $fixed = strtr($value, ['+92 301 9062877' => '+92 310 4489288'] + FACT_FIXES);
+        $fixed = strtr($value, ['+92 301 9062877' => '+92 3 000-911-000'] + FACT_FIXES);
         if ($fixed !== $value) {
             $text->nodeValue = $fixed;
         }

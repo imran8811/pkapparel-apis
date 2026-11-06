@@ -3,7 +3,7 @@
  * Automatic acknowledgement sent to the person who submitted an inquiry.
  * Variables: $inquiry (array), $files (attached uploads), $typeLabel (string), $reference (string), $contact (settings), $e (escaper).
  */
-$whatsapp = preg_replace('/\D/', '', (string) ($contact['whatsapp'] ?? '923104489288'));
+$whatsapp = preg_replace('/\D/', '', (string) ($contact['whatsapp'] ?? '923000911000'));
 ?>
 <h1 style="margin:0 0 12px;font-size:20px;">Thank you, <?= $e($inquiry['name']) ?>.</h1>
 <p style="margin:0 0 14px;">We have received your <?= $e(strtolower($typeLabel)) ?> and our team will get back to you soon.</p>
