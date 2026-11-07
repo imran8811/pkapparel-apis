@@ -23,6 +23,9 @@ use App\Services\ImageStore;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
+/** The old girls' styles (sizes 18–36) are sold as women's styles in women's waist sizes (owner decision 2026-10-20). */
+const WOMENS_SIZES = ['26', '28', '30', '32', '34', '36'];
+
 const STYLES = [
     [
         'name' => "Men's slim stretch jeans",
@@ -121,45 +124,45 @@ const STYLES = [
         'colors' => ['2232' => ['Medium blue']],
     ],
     [
-        'name' => "Girls' daisy print flare jeans",
-        'slug' => 'girls-daisy-print-flare-jeans',
-        'segment' => 'girls', 'type' => 'jeans-pant',
+        'name' => "Women's daisy print flare jeans",
+        'slug' => 'womens-daisy-print-flare-jeans',
+        'segment' => 'women', 'type' => 'jeans-pant', 'sizes' => WOMENS_SIZES,
         'fit' => 'Flare', 'fabric' => 'Stretch denim', 'composition' => '98% cotton, 2% spandex', 'fabric_weight' => '10 oz',
         'stretch' => 'stretch', 'wash' => 'Silicone wash', 'closure' => 'Zip fly',
-        'description' => '<p>Flared jeans for girls with a daisy print, in soft stretch denim.</p>',
+        'description' => '<p>Flared jeans for women with a daisy print, in soft stretch denim.</p>',
         'features' => ['Daisy print'],
         'size_chart' => false,
         'colors' => ['3102' => ['Light blue']],
     ],
     [
-        'name' => "Girls' pull-on flare jeans",
-        'slug' => 'girls-pull-on-flare-jeans',
-        'segment' => 'girls', 'type' => 'jeans-pant',
+        'name' => "Women's pull-on flare jeans",
+        'slug' => 'womens-pull-on-flare-jeans',
+        'segment' => 'women', 'type' => 'jeans-pant', 'sizes' => WOMENS_SIZES,
         'fit' => 'Flare', 'fabric' => 'Stretch denim', 'composition' => '98% cotton, 2% spandex', 'fabric_weight' => '10 oz',
         'stretch' => 'stretch', 'wash' => 'Silicone wash', 'closure' => 'Elastic waist',
-        'description' => '<p>Pull-on flared jeans for girls with an elastic waist and a fringed hem with star details, in soft stretch denim.</p>',
+        'description' => '<p>Pull-on flared jeans for women with an elastic waist and a fringed hem with star details, in soft stretch denim.</p>',
         'features' => ['Elastic pull-on waist', 'Fringed hem with star details'],
         'size_chart' => false,
         'colors' => ['3103' => ['Blue']],
     ],
     [
-        'name' => "Girls' butterfly print wide-leg jeans",
-        'slug' => 'girls-butterfly-print-wide-leg-jeans',
-        'segment' => 'girls', 'type' => 'jeans-pant',
+        'name' => "Women's butterfly print wide-leg jeans",
+        'slug' => 'womens-butterfly-print-wide-leg-jeans',
+        'segment' => 'women', 'type' => 'jeans-pant', 'sizes' => WOMENS_SIZES,
         'fit' => 'Wide leg', 'fabric' => 'Stretch denim', 'composition' => '98% cotton, 2% spandex', 'fabric_weight' => '10 oz',
         'stretch' => 'stretch', 'wash' => 'Silicone wash', 'closure' => 'Zip fly',
-        'description' => '<p>Wide-leg jeans for girls with a butterfly print, in a light wash of soft stretch denim.</p>',
+        'description' => '<p>Wide-leg jeans for women with a butterfly print, in a light wash of soft stretch denim.</p>',
         'features' => ['Butterfly print'],
         'size_chart' => false,
         'colors' => ['3104' => ['Light blue']],
     ],
     [
-        'name' => "Girls' patched wide-leg jeans",
-        'slug' => 'girls-patched-wide-leg-jeans',
-        'segment' => 'girls', 'type' => 'jeans-pant',
+        'name' => "Women's patched wide-leg jeans",
+        'slug' => 'womens-patched-wide-leg-jeans',
+        'segment' => 'women', 'type' => 'jeans-pant', 'sizes' => WOMENS_SIZES,
         'fit' => 'Wide leg', 'fabric' => 'Stretch denim', 'composition' => '98% cotton, 2% spandex', 'fabric_weight' => '10 oz',
         'stretch' => 'stretch', 'wash' => 'Silicone wash', 'closure' => 'Zip fly',
-        'description' => '<p>Wide-leg jeans for girls with ripped details and colorful patches, in soft stretch denim.</p>',
+        'description' => '<p>Wide-leg jeans for women with ripped details and colorful patches, in soft stretch denim.</p>',
         'features' => ['Ripped details', 'Colorful patches'],
         'size_chart' => false,
         'colors' => ['3105' => ['Sky blue']],
@@ -204,7 +207,7 @@ foreach (STYLES as $index => $style) {
 
     $prices = array_map(static fn (string $a): int => (int) round((float) $old[$a]['price'] * 100), array_combine($articles, $articles));
     $stylePrice = mostCommon(array_values($prices));
-    $sizes = explode('-', (string) $old[$articles[0]]['p_sizes']);
+    $sizes = $style['sizes'] ?? explode('-', (string) $old[$articles[0]]['p_sizes']);
     $pieceWeight = max(array_map(static fn (string $a): int => (int) $old[$a]['piece_weight'], $articles));
     $featured = array_filter($articles, static fn (string $a): bool => (int) $old[$a]['featured'] === 1) !== [];
 

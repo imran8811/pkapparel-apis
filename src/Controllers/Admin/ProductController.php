@@ -13,6 +13,7 @@ use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Models\Product;
 use App\Models\ProductColor;
+use App\Models\ProductTypes;
 use App\Models\SizeChart;
 use App\Services\Redirects;
 use App\Services\WebRevalidator;
@@ -57,6 +58,14 @@ final class ProductController extends AdminController
         ], $result['items']);
 
         return Response::data($items, self::paginationMeta($page, $perPage, $result['total']) + ['counts' => $this->products->countByStatus()]);
+    }
+
+    /** GET /v1/admin/product-types: segments, size systems and the specs of each type (for the style, size chart and add-on forms). */
+    public function types(Request $request): Response
+    {
+        $this->authorize($request, 'editor', 'sales');
+
+        return Response::data(ProductTypes::describe());
     }
 
     /** GET /v1/admin/products/{id}: the style with all its colors, photos and price tiers. */
@@ -126,6 +135,7 @@ final class ProductController extends AdminController
     private function present(int $id): array
     {
         $product = $this->findOrFail($id);
+        $product['specs'] = ProductTypes::values($product);
         $product['colors'] = $this->colors->forProducts([$id], false)[$id] ?? [];
         $product['tiers'] = $this->products->tiers($id);
 
@@ -163,17 +173,12 @@ final class ProductController extends AdminController
             'name' => 'required|string|min:3|max:200',
             'slug' => 'nullable|slug|max:190',
             'style_no' => 'nullable|string|max:40',
-            'segment' => 'required|in:' . implode(',', Product::SEGMENTS),
-            'product_type' => 'required|in:' . implode(',', Product::TYPES),
-            'fit' => 'nullable|string|max:60',
-            'fabric' => 'nullable|string|max:120',
-            'composition' => 'nullable|string|max:120',
-            'fabric_weight' => 'nullable|string|max:40',
-            'stretch' => 'nullable|in:stretch,non-stretch',
-            'wash' => 'nullable|string|max:120',
-            'closure' => 'nullable|string|max:60',
+            'segment' => 'required|in:' . implode(',', ProductTypes::SEGMENTS),
+            'product_type' => 'required|in:' . implode(',', ProductTypes::slugs()),
+            'specs' => 'nullable|array',
             'description_html' => 'nullable|string|max:200000',
             'features' => 'nullable|array|max:12',
+            'size_system' => 'nullable|in:' . implode(',', array_keys(ProductTypes::SIZE_SYSTEMS)),
             'sizes' => 'required|array|max:20',
             'size_chart_id' => 'nullable|int|min:1',
             'price_cents' => 'required|int|min:1|max:100000000',
@@ -195,8 +200,7 @@ final class ProductController extends AdminController
             'sort_order' => 'nullable|int|min:0|max:1000000',
         ])->validate();
 
-        $data += array_fill_keys(['style_no', 'fit', 'fabric', 'composition', 'fabric_weight', 'stretch', 'wash', 'closure', 'size_chart_id',
-            'moq_per_color', 'set_pcs_per_size', 'min_pcs_per_size', 'lead_time_days', 'sample_price_cents', 'piece_weight_g', 'pcs_per_carton',
+        $data += array_fill_keys(['style_no', 'size_chart_id', 'moq_per_color', 'set_pcs_per_size', 'min_pcs_per_size', 'lead_time_days', 'sample_price_cents', 'piece_weight_g', 'pcs_per_carton',
             'carton_length_mm', 'carton_width_mm', 'carton_height_mm', 'carton_weight_g', 'seo_title', 'seo_description'], null);
         $data['status'] ??= 'draft';
         $data['is_featured'] ??= false;
@@ -206,25 +210,107 @@ final class ProductController extends AdminController
         if ($this->products->slugExists($data['slug'], $id)) {
             throw new ValidationException(['slug' => 'Another style already uses this web address.']);
         }
-        if ($data['size_chart_id'] !== null && $this->charts->find($data['size_chart_id']) === null) {
-            throw new ValidationException(['size_chart_id' => 'This size chart does not exist.']);
+        $type = $data['product_type'];
+        if (!ProductTypes::fits($data['segment'], $type)) {
+            throw new ValidationException(['product_type' => sprintf('This type is only for %s.', ProductTypes::segmentsText($type))]);
         }
-        if (!Product::typeFits($data['segment'], $data['product_type'])) {
-            throw new ValidationException(['product_type' => sprintf('This type is only for %s.', implode(' and ', Product::ONLY_IN[$data['product_type']]))]);
+        $data['size_system'] ??= ProductTypes::sizeSystems($type)[0];
+        if (!in_array($data['size_system'], ProductTypes::sizeSystems($type), true)) {
+            throw new ValidationException(['size_system' => sprintf('%s use %s.', ProductTypes::TYPES[$type]['label'], self::systemsText($type))]);
+        }
+        if ($data['size_chart_id'] !== null) {
+            $chart = $this->charts->find($data['size_chart_id']) ?? throw new ValidationException(['size_chart_id' => 'This size chart does not exist.']);
+            if ($chart['size_system'] !== $data['size_system']) {
+                throw new ValidationException(['size_chart_id' => sprintf('This chart is for %s. Choose a chart for %s.', self::systemName($chart['size_system']), self::systemName($data['size_system']))]);
+            }
         }
 
         $data['description_html'] = $this->sanitizer->sanitize((string) ($data['description_html'] ?? ''));
         $data['features'] = self::textList($input['features'] ?? [], 'features', 12, 120);
-        $data['sizes'] = self::textList($input['sizes'] ?? [], 'sizes', 20, 12);
-        if ($data['sizes'] === []) {
-            throw new ValidationException(['sizes' => 'Add at least one size.']);
-        }
-        if (count(array_unique(array_map('mb_strtolower', $data['sizes']))) !== count($data['sizes'])) {
-            throw new ValidationException(['sizes' => 'Each size can only be listed once.']);
-        }
+        $data['sizes'] = self::sizes(self::textList($input['sizes'] ?? [], 'sizes', 20, 12), $data['size_system']);
+        unset($data['specs']);
+        $data += self::specs($input['specs'] ?? [], $type);
         $data['tiers'] = self::tiers($input['tiers'] ?? [], $data['price_cents']);
 
         return $data;
+    }
+
+    /**
+     * The specs of the style's type: shared ones in their columns, the others in `attributes`.
+     * Specs the type does not show are cleared (e.g. stretch when a style becomes a T-shirt).
+     *
+     * @return array<string, mixed>
+     */
+    private static function specs(mixed $input, string $type): array
+    {
+        if (!is_array($input)) {
+            throw new ValidationException(['specs' => 'Must be a list of details.']);
+        }
+        $data = array_fill_keys(ProductTypes::COLUMNS, null);
+        $attributes = [];
+        foreach (ProductTypes::specs($type) as $field) {
+            $value = $input[$field['key']] ?? null;
+            if ($value !== null && !is_string($value)) {
+                throw new ValidationException(["specs.{$field['key']}" => 'Must be text.']);
+            }
+            $value = $value === null || trim($value) === '' ? null : trim($value);
+            if ($value !== null && mb_strlen($value) > $field['max']) {
+                throw new ValidationException(["specs.{$field['key']}" => "Use at most {$field['max']} characters."]);
+            }
+            if ($field['key'] === 'stretch' && $value !== null && !in_array($value, ['stretch', 'non-stretch'], true)) {
+                throw new ValidationException(['specs.stretch' => 'Choose stretch or non-stretch.']);
+            }
+            if (in_array($field['key'], ProductTypes::COLUMNS, true)) {
+                $data[$field['key']] = $value;
+            } elseif ($value !== null) {
+                $attributes[$field['key']] = $value;
+            }
+        }
+        $data['attributes'] = $attributes;
+
+        return $data;
+    }
+
+    /**
+     * Sizes as the system writes them, in size order (for "other", in the order typed).
+     *
+     * @param list<string> $sizes
+     * @return list<string>
+     */
+    private static function sizes(array $sizes, string $system): array
+    {
+        if ($sizes === []) {
+            throw new ValidationException(['sizes' => 'Add at least one size.']);
+        }
+        $clean = [];
+        foreach ($sizes as $size) {
+            $normal = ProductTypes::normalizeSize($system, $size);
+            if ($normal === null) {
+                throw new ValidationException(['sizes' => sprintf('“%s” is not one of the %s.', $size, self::systemName($system))]);
+            }
+            $clean[] = $normal;
+        }
+        if (count(array_unique(array_map('mb_strtolower', $clean))) !== count($clean)) {
+            throw new ValidationException(['sizes' => 'Each size can only be listed once.']);
+        }
+        $order = ProductTypes::sizesOf($system);
+        if ($order !== null) {
+            usort($clean, static fn (string $a, string $b): int => array_search($a, $order, true) <=> array_search($b, $order, true));
+        }
+
+        return $clean;
+    }
+
+    /** "waist sizes", "letter sizes", "other sizes" */
+    private static function systemName(string $system): string
+    {
+        return $system . ' sizes';
+    }
+
+    /** "waist sizes or other sizes" */
+    private static function systemsText(string $type): string
+    {
+        return implode(' or ', array_map(self::systemName(...), ProductTypes::sizeSystems($type)));
     }
 
     /** @return list<string> Trimmed, non-empty text items. */

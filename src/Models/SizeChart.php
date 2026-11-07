@@ -7,7 +7,8 @@ namespace App\Models;
 use App\Core\Database;
 
 /**
- * Garment measurements per size, e.g. waist, hip and inseam for sizes 30–40.
+ * Garment measurements per size, e.g. waist, hip and inseam for sizes 30–40, or chest and body length for S–XXL.
+ * A chart uses one size system (ProductTypes::SIZE_SYSTEMS); a style can only show a chart of its own system.
  * `measurements` are the column names; `size_rows` hold one value per measurement for each size.
  */
 final class SizeChart
@@ -36,16 +37,22 @@ final class SizeChart
         return $row === null ? null : self::present($row);
     }
 
-    /** @param array{name: string, unit: string, measurements: list<string>, size_rows: list<array{size: string, values: list<string>}>, note: ?string} $data */
+    /** @param array{name: string, size_system: string, unit: string, measurements: list<string>, size_rows: list<array{size: string, values: list<string>}>, note: ?string} $data */
     public function create(array $data): int
     {
         return $this->db->insert('size_charts', self::encode($data));
     }
 
-    /** @param array{name: string, unit: string, measurements: list<string>, size_rows: list<array{size: string, values: list<string>}>, note: ?string} $data */
+    /** @param array{name: string, size_system: string, unit: string, measurements: list<string>, size_rows: list<array{size: string, values: list<string>}>, note: ?string} $data */
     public function update(int $id, array $data): void
     {
         $this->db->update('size_charts', self::encode($data), ['id' => $id]);
+    }
+
+    /** Styles that use this chart but another size system. */
+    public function stylesOfOtherSystem(int $id, string $system): int
+    {
+        return (int) $this->db->fetchValue('SELECT COUNT(*) FROM products WHERE size_chart_id = ? AND size_system <> ?', [$id, $system]);
     }
 
     public function delete(int $id): void
@@ -63,6 +70,7 @@ final class SizeChart
 
         return [
             'name' => $data['name'],
+            'size_system' => $data['size_system'],
             'unit' => $data['unit'],
             'measurements' => json_encode(array_values($data['measurements']), $flags),
             'size_rows' => json_encode(array_values($data['size_rows']), $flags),
@@ -72,13 +80,14 @@ final class SizeChart
 
     /**
      * @param array<string, mixed> $row
-     * @return array{id: int, name: string, unit: string, measurements: list<string>, size_rows: list<array{size: string, values: list<string>}>, note: ?string, updated_at: string}
+     * @return array{id: int, name: string, size_system: string, unit: string, measurements: list<string>, size_rows: list<array{size: string, values: list<string>}>, note: ?string, updated_at: string}
      */
     private static function present(array $row): array
     {
         return [
             'id' => (int) $row['id'],
             'name' => (string) $row['name'],
+            'size_system' => (string) $row['size_system'],
             'unit' => (string) $row['unit'],
             'measurements' => json_decode((string) $row['measurements'], true) ?: [],
             'size_rows' => json_decode((string) $row['size_rows'], true) ?: [],

@@ -56,6 +56,8 @@ final class AdminApiTest extends IntegrationTestCase
         $this->db->execute("DELETE FROM staff_users WHERE email IN ({$in})", $emails);
         $this->db->execute("DELETE FROM faqs WHERE question LIKE 'TEST:%'");
         $this->db->execute("DELETE FROM posts WHERE slug LIKE 'test-post-%'");
+        // Changing a published post's address adds a redirect (Redirects::moved).
+        $this->db->execute("DELETE FROM redirects WHERE from_path LIKE '/post/test-post-%'");
         $this->db->execute("DELETE FROM inquiries WHERE email = 'pipeline@example.test'");
         $limiter = new RateLimiter($this->db);
         $limiter->clear('staff-login-ip:' . self::TEST_IP);

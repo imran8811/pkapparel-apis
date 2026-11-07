@@ -23,7 +23,7 @@ $factory = is_array($addresses ?? null) && isset($addresses[0]) ? $addresses[0] 
         <tr>
           <td style="background:#0b132b;padding:22px 28px;">
             <span style="font-size:22px;font-weight:bold;color:#ffffff;letter-spacing:-0.5px;">PK Apparel</span>
-            <span style="display:block;margin-top:4px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#f09a55;">Denim manufacturer · Made to order</span>
+            <span style="display:block;margin-top:4px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#f09a55;">Apparel manufacturer · Made to order</span>
           </td>
         </tr>
         <tr>

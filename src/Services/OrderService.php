@@ -79,7 +79,7 @@ final class OrderService
             'address_id' => $selected['id'] ?? null,
             'country_code' => $country,
             'shipping' => $this->freight->quote($country, $cart['packing']),
-            'addons' => $this->options->active(),
+            'addons' => $this->options->activeFor(self::cartTypes($cart)),
             'deposit_percent' => $this->commerce->depositPercent(),
             'email_verified' => $customer['email_verified_at'] !== null,
             // Paid samples, deducted from the balance once this order is confirmed.
@@ -104,7 +104,8 @@ final class OrderService
         if ($address === null) {
             throw new ValidationException(['address_id' => 'Choose a delivery address.']);
         }
-        $chosenAddons = $this->chosenAddons($data['addons'] ?? []);
+        $cart = $this->cartService->summary($this->carts->idForCustomer($customerId));
+        $chosenAddons = $this->chosenAddons($data['addons'] ?? [], self::cartTypes($cart));
 
         $orderId = null;
         for ($attempt = 1; $orderId === null; $attempt++) {
@@ -653,12 +654,22 @@ final class OrderService
     }
 
     /**
+     * @param array<string, mixed> $cart CartService::summary()
+     * @return list<string> The product types in the cart: add-ons are offered for these.
+     */
+    private static function cartTypes(array $cart): array
+    {
+        return array_values(array_unique(array_map(static fn (array $style): string => (string) $style['product_type'], $cart['styles'])));
+    }
+
+    /**
      * @param array<mixed> $ids
+     * @param list<string> $types the cart's product types
      * @return list<array<string, mixed>>
      */
-    private function chosenAddons(array $ids): array
+    private function chosenAddons(array $ids, array $types): array
     {
-        $active = array_column($this->options->active(), null, 'id');
+        $active = array_column($this->options->activeFor($types), null, 'id');
         $chosen = [];
         foreach (array_unique(array_map('intval', $ids)) as $id) {
             if (!isset($active[$id])) {

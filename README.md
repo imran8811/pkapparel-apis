@@ -44,6 +44,13 @@ All of these run from this folder.
 | Import the old blog posts | `php bin/import-legacy-posts.php` |
 | Import the old shop's products | `php bin/import-legacy-products.php` |
 
+**On hosting without a terminal (cPanel):**
+- **New migrations:** in phpMyAdmin, open the database, then *Import* each new file from `database/migrations`, in number order.
+  - If the database has a `schema_migrations` table, record each one on the *SQL* tab, so `bin/migrate.php` never applies it twice: `INSERT IGNORE INTO schema_migrations (version) VALUES ('0025_product_range');` (the file name without `.sql`).
+  - Upload the new API files and import their migration together: the new code reads the new columns.
+- **Refreshing the website's cache:** a new website deployment rebuilds every page from the API, so it shows the new data. Vercel's *Redeploy* does the same when the website code has not changed.
+- **Any other `php bin/…` command** can run from cPanel's *Cron Jobs*: add a job for the next minute, wait for it, then delete it.
+
 **The import scripts** add only what is missing. `--dry-run` shows what they would do. `--overwrite` also replaces items imported before, which **loses edits made in the admin**.
 They read the old site's files and database, set in `LEGACY_*` in `.env`, and never change them.
 
@@ -140,7 +147,12 @@ php bin/create-staff.php --name="Your Name" --email=you@example.com --role=admin
   - New reviews wait for staff (`GET /v1/admin/reviews?status=pending`, then `POST …/{id}/approve` or `…/hide`).
   - Approved reviews appear in `GET /v1/products/{slug}` (`reviews`) for every style in the order, and those product pages are refreshed.
   - `…/{id}/feature` copies an approved review into the home page reviews (`testimonials`). Hiding the review deletes that copy.
-- **Product types:** cargo trousers and chino pants are for men only, denim skirts for women and girls only (`App\Models\Product::ONLY_IN`; the website's `lib/nav.ts` mirrors it).
+- **Product types** (`App\Models\ProductTypes`, the one definition of segments, types, size systems and specs):
+  - Segments are men and women. Cargo trousers and chino pants are men only, denim skirts women only. The website's `lib/nav.ts` mirrors the type list (slug, label, segments).
+  - **Size systems:** each style and size chart has one. `waist` is inches 24–48, `letter` is XXS–5XL (`2XL` is written `XXL`), and `other` keeps the style's own list in the order typed. The API checks sizes against the system and keeps them in size order. A style can only use a size chart of its own system.
+  - **Specs per type:** e.g. rise and inseam for jeans, neckline and sleeve for T-shirts, collar and placket for polo shirts. Specs shared by all types stay in their own columns (`fit`, `fabric`, `composition`, `fabric_weight`, `stretch`, `wash`, `closure`); the others are kept in `products.attributes` (JSON). The admin sends them as `specs: {key: value}`; specs the type does not show are cleared. Colors may only change fabric details (`ProductTypes::COLOR_SPECS`).
+  - `GET /v1/products/{slug}` returns `specs`, `spec_fields` (labels in display order, e.g. "Inseam", "Finish") and `size_system`. `GET /v1/admin/product-types` returns the definitions with suggested values, for the admin forms.
+- **Add-ons per product type:** `customization_options.product_types` (JSON; empty means every type). Checkout only offers, and accepts, add-ons that fit at least one style in the cart.
 
 ### Redirects and the launch checklist
 
@@ -196,13 +208,15 @@ To make a secret: `php -r "echo bin2hex(random_bytes(32));"`
   - from the daily job: payment reminders, the automatic cancellation and review requests
 - **Links in emails** point to `WEB_URL`, so set it to the live website address in production.
 
-**Gmail (pkapparel2@gmail.com):**
-1. Turn on 2-Step Verification for the Google account.
-2. Create an **App Password** at https://myaccount.google.com/apppasswords.
-3. Paste it into `.env` after `MAIL_PASSWORD=`. Never send it by chat or email.
-4. Check it with `php bin/send-test-email.php you@example.com`.
+**On the hosting (cPanel), send through its own mailbox, `info@pkapparel.com`:**
+- Shared hosting usually blocks outside mail servers such as Gmail's. Mail sent from your own domain's mailbox also keeps `info@pkapparel.com` as the sender.
+- Settings: `MAIL_HOST` and `MAIL_PORT` come from cPanel → Email Accounts → Connect Devices (Secure SSL/TLS settings: usually `mail.pkapparel.com`, port 465). Then `MAIL_ENCRYPTION=ssl`, `MAIL_USERNAME=info@pkapparel.com`, and the mailbox password in `MAIL_PASSWORD`.
+- Check with `php bin/send-test-email.php you@gmail.com`. If it says "Not sent", the reason is in `storage/logs/api-<date>.log` ("Email could not be sent").
+- When the domain moves to Vercel, `mail.pkapparel.com` (and the MX record) must keep pointing at the hosting server.
 
-Until the password is filled in, emails go to the log file and a warning is logged.
+**Gmail (only where outside mail servers are allowed):** turn on 2-Step Verification, create an App Password at https://myaccount.google.com/apppasswords, and use `MAIL_HOST=smtp.gmail.com`, port 587, `MAIL_ENCRYPTION=tls`. Gmail sends with the Gmail address as the sender.
+
+Never send a password by chat or email. Until the password is filled in, emails go to the log file and a warning is logged.
 
 ## Daily job (cron)
 

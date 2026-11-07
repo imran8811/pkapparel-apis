@@ -10,6 +10,7 @@ use App\Core\Response;
 use App\Core\Validator;
 use App\Models\Category;
 use App\Models\Product;
+use App\Models\ProductTypes;
 use App\Services\Catalog;
 
 /** The wholesale shop for the public website: styles, product pages and category texts. */
@@ -26,8 +27,8 @@ final class ShopController
     public function products(Request $request): Response
     {
         $query = Validator::make($request->allQuery(), [
-            'segment' => 'nullable|in:' . implode(',', Product::SEGMENTS),
-            'type' => 'nullable|in:' . implode(',', Product::TYPES),
+            'segment' => 'nullable|in:' . implode(',', ProductTypes::SEGMENTS),
+            'type' => 'nullable|in:' . implode(',', ProductTypes::slugs()),
             'fit' => 'nullable|string|max:60',
             'stretch' => 'nullable|in:stretch,non-stretch',
             'q' => 'nullable|string|max:80',

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Integration;
 
+use App\Models\CustomizationOption;
+
 /**
  * Cart → checkout → order → proforma invoice → payment report, plus the admin views.
  * Uses its own test style, freight zone (Antarctica, AQ) and add-on (OrderTestCase), so it does not depend on the catalog.
@@ -96,11 +98,21 @@ final class OrderFlowTest extends OrderTestCase
         self::assertSame(63 * 600 + 2500, $checkout['shipping']['air']['cost_cents'], '63 kg at the first weight band');
         self::assertSame(9000 + 10000, $checkout['shipping']['sea']['cost_cents'], 'Sea is charged for at least 1 CBM');
         self::assertContains($this->addonId, array_column($checkout['addons'], 'id'));
+        // Add-ons limited to other product types are not offered with these jeans, and cannot be chosen.
+        $printing = $this->app->container->get(CustomizationOption::class)->create(['name' => 'TEST printing', 'pricing' => 'on_request', 'product_types' => ['t-shirt', 'hoodie'], 'is_active' => true]);
+        $denim = $this->app->container->get(CustomizationOption::class)->create(['name' => 'TEST rivets', 'pricing' => 'on_request', 'product_types' => ['jeans-pant'], 'is_active' => true]);
+        $offered = array_column($this->send('GET', '/v1/account/checkout', ['address_id' => $addressId], $token)->decoded()['data']['addons'], 'id');
+        self::assertNotContains($printing, $offered);
+        self::assertContains($denim, $offered);
 
         $goods = 60 * 400 + 60 * 450;
         $addons = 120 * 12;
         $total = $goods + $addons + 63 * 600 + 2500;
         $order = ['address_id' => $addressId, 'shipping_mode' => 'air', 'addons' => [$this->addonId], 'buyer_reference' => 'PO-77', 'accept_terms' => true];
+
+        $wrongType = $this->send('POST', '/v1/account/orders', ['addons' => [$this->addonId, $printing]] + $order + ['expected_total_cents' => $total], $token);
+        self::assertSame(422, $wrongType->status());
+        self::assertArrayHasKey('addons', $wrongType->decoded()['error']['fields']);
 
         $stale = $this->send('POST', '/v1/account/orders', $order + ['expected_total_cents' => $total - 1], $token);
         self::assertSame(409, $stale->status());
@@ -267,6 +279,10 @@ final class OrderFlowTest extends OrderTestCase
 
         $addon = $this->send('POST', '/v1/admin/addons', ['name' => 'TEST hang tags', 'pricing' => 'per_order', 'price_cents' => 2500], $staff);
         self::assertSame(201, $addon->status());
+        self::assertSame([], $addon->decoded()['data']['product_types'], 'No product types: offered with every type');
+        $patch = $this->send('POST', '/v1/admin/addons', ['name' => 'TEST patch', 'pricing' => 'on_request', 'product_types' => ['jeans-short', 'jeans-pant']], $staff)->decoded()['data'];
+        self::assertSame(['jeans-pant', 'jeans-short'], $patch['product_types'], 'Kept in the order of the type list');
+        self::assertArrayHasKey('product_types', $this->send('POST', '/v1/admin/addons', ['name' => 'TEST hats', 'pricing' => 'on_request', 'product_types' => ['hats']], $staff)->decoded()['error']['fields']);
         self::assertSame(422, $this->send('POST', '/v1/admin/addons', ['name' => 'TEST no price', 'pricing' => 'per_piece'], $staff)->status());
         $onRequest = $this->send('PUT', '/v1/admin/addons/' . $addon->decoded()['data']['id'], ['name' => 'TEST hang tags', 'pricing' => 'on_request', 'price_cents' => 99], $staff)->decoded()['data'];
         self::assertNull($onRequest['price_cents'], 'On-request add-ons have no price');

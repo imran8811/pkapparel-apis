@@ -12,8 +12,8 @@ use App\Core\Database;
  */
 final class ProductColor
 {
-    /** Fabric details a color may change, e.g. the olive cargo is stretch while the others are not. */
-    public const SPEC_KEYS = ['fabric', 'composition', 'fabric_weight', 'stretch', 'wash', 'closure'];
+    /** Fabric details a color may change, e.g. the olive cargo is stretch while the others are not (only those its type shows). */
+    public const SPEC_KEYS = ProductTypes::COLOR_SPECS;
 
     public function __construct(private readonly Database $db)
     {

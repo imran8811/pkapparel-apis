@@ -12,6 +12,7 @@ use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Models\Product;
 use App\Models\ProductColor;
+use App\Models\ProductTypes;
 use App\Services\ImageStore;
 use App\Services\WebRevalidator;
 
@@ -33,7 +34,7 @@ final class ProductColorController extends AdminController
     {
         $this->authorize($request, 'editor');
         $product = $this->products->find($this->id($request)) ?? throw HttpException::notFound('This style does not exist.');
-        [$data, $photos] = $this->validated($request, $product['id'], null);
+        [$data, $photos] = $this->validated($request, $product, null);
         $data['sort_order'] ??= $this->colors->nextSortOrder($product['id']);
 
         $id = $this->colors->create($product['id'], $data, $photos ?? []);
@@ -48,7 +49,7 @@ final class ProductColorController extends AdminController
         $this->authorize($request, 'editor');
         $color = $this->colors->find($this->id($request)) ?? throw HttpException::notFound('This color does not exist.');
         $product = $this->products->find($color['product_id']) ?? throw HttpException::notFound('This style does not exist.');
-        [$data, $photos] = $this->validated($request, $product['id'], $color['id']);
+        [$data, $photos] = $this->validated($request, $product, $color['id']);
         if ($data['sort_order'] === null) {
             unset($data['sort_order']);
         }
@@ -110,9 +111,13 @@ final class ProductColorController extends AdminController
         throw HttpException::notFound('This color does not exist.');
     }
 
-    /** @return array{0: array<string, mixed>, 1: list<array{path: string, alt: string, width: int, height: int}>|null} */
-    private function validated(Request $request, int $productId, ?int $colorId): array
+    /**
+     * @param array<string, mixed> $product
+     * @return array{0: array<string, mixed>, 1: list<array{path: string, alt: string, width: int, height: int}>|null}
+     */
+    private function validated(Request $request, array $product, ?int $colorId): array
     {
+        $productId = (int) $product['id'];
         $input = $request->all();
         $data = Validator::make($input, [
             'code' => ['required', 'string', 'max:40', 'regex:/^[A-Za-z0-9][A-Za-z0-9-]*$/'],
@@ -132,7 +137,7 @@ final class ProductColorController extends AdminController
         $data['price_cents'] ??= null;
         $data['is_active'] ??= true;
         $data['sort_order'] ??= null;
-        $data['spec_overrides'] = self::specs($data['spec_overrides'] ?? []);
+        $data['spec_overrides'] = self::specs($data['spec_overrides'] ?? [], (string) $product['product_type']);
 
         $photos = array_key_exists('images', $input) ? $this->photos($input['images']) : null;
 
@@ -150,14 +155,14 @@ final class ProductColorController extends AdminController
         return $slug;
     }
 
-    /** @return array<string, string> */
-    private static function specs(mixed $specs): array
+    /** @return array<string, string> The fabric details this color changes, among those its style's type shows. */
+    private static function specs(mixed $specs, string $type): array
     {
         if (!is_array($specs)) {
             throw new ValidationException(['spec_overrides' => 'Must be a list of fabric details.']);
         }
         $clean = [];
-        foreach (ProductColor::SPEC_KEYS as $key) {
+        foreach (array_intersect(ProductColor::SPEC_KEYS, ProductTypes::specKeys($type)) as $key) {
             $value = $specs[$key] ?? null;
             if ($value === null || (is_string($value) && trim($value) === '')) {
                 continue;

@@ -49,7 +49,7 @@ abstract class OrderTestCase extends BuyerApiTestCase
 
         $this->productId = $container->get(Product::class)->create([
             'slug' => $this->fixtureSlug(), 'name' => 'TEST Order Jeans', 'style_no' => 'TST-1', 'segment' => 'men',
-            'product_type' => 'jeans-pant', 'description_html' => '', 'features' => [], 'sizes' => ['S', 'M', 'L'], 'price_cents' => 400,
+            'product_type' => 'jeans-pant', 'description_html' => '', 'features' => [], 'size_system' => 'other', 'sizes' => ['S', 'M', 'L'], 'price_cents' => 400,
             'moq_per_color' => 60, 'lead_time_days' => 35, 'piece_weight_g' => 500, 'pcs_per_carton' => 40,
             'carton_length_mm' => 600, 'carton_width_mm' => 400, 'carton_height_mm' => 300, 'carton_weight_g' => 1000, 'status' => 'active',
         ]);

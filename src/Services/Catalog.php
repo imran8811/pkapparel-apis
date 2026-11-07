@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\Product;
 use App\Models\ProductColor;
+use App\Models\ProductTypes;
 use App\Models\Review;
 use App\Models\Settings;
 use App\Models\SizeChart;
@@ -16,8 +17,6 @@ use App\Models\SizeChart;
  */
 final class Catalog
 {
-    private const SPEC_KEYS = ['fit', 'fabric', 'composition', 'fabric_weight', 'stretch', 'wash', 'closure'];
-
     /** Reviews shown on a product page. */
     private const REVIEWS_PER_PRODUCT = 20;
 
@@ -69,7 +68,8 @@ final class Catalog
         }
 
         $chart = $product['size_chart_id'] !== null ? $this->charts->find($product['size_chart_id']) : null;
-        $specs = array_intersect_key($product, array_flip(self::SPEC_KEYS));
+        $specs = ProductTypes::values($product);
+        $colorSpecs = array_intersect(ProductColor::SPEC_KEYS, array_keys($specs));
 
         return [
             'slug' => $product['slug'],
@@ -78,8 +78,11 @@ final class Catalog
             'segment' => $product['segment'],
             'product_type' => $product['product_type'],
             'specs' => $specs,
+            // The specs of this type, labeled and in display order (e.g. "Inseam" for jeans, "Neckline" for T-shirts).
+            'spec_fields' => array_map(static fn (array $field): array => ['key' => $field['key'], 'label' => $field['label']], ProductTypes::specs($product['product_type'])),
             'description_html' => (string) $product['description_html'],
             'features' => $product['features'],
+            'size_system' => $product['size_system'],
             'sizes' => $product['sizes'],
             'size_chart' => $chart === null ? null : [
                 'name' => $chart['name'],
@@ -101,7 +104,7 @@ final class Catalog
                 'slug' => $color['slug'],
                 'hex' => $color['hex'],
                 'price_cents' => $color['price_cents'] ?? $product['price_cents'],
-                'specs' => array_merge($specs, $color['spec_overrides']),
+                'specs' => array_merge($specs, array_intersect_key($color['spec_overrides'], array_flip($colorSpecs))),
                 'images' => $color['images'],
             ], $colors),
             'is_featured' => $product['is_featured'],

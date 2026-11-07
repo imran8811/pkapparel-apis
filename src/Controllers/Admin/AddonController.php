@@ -10,8 +10,12 @@ use App\Core\Response;
 use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Models\CustomizationOption;
+use App\Models\ProductTypes;
 
-/** Customization add-ons offered at checkout. Orders keep their own copy, so deleting one never changes an order. */
+/**
+ * Customization add-ons offered at checkout, optionally only for some product types.
+ * Orders keep their own copy, so deleting one never changes an order.
+ */
 final class AddonController extends AdminController
 {
     public function __construct(private readonly CustomizationOption $options)
@@ -67,9 +71,17 @@ final class AddonController extends AdminController
             'description' => 'nullable|string|max:500',
             'pricing' => 'required|in:' . implode(',', CustomizationOption::PRICING),
             'price_cents' => 'nullable|int|min:1|max:100000000',
+            'product_types' => 'nullable|array',
             'is_active' => 'nullable|bool',
             'sort_order' => 'nullable|int|min:0|max:100000',
         ])->validate();
+
+        // Empty: offered with every product type.
+        $types = $data['product_types'] ?? [];
+        if (!array_is_list($types) || array_diff($types, ProductTypes::slugs()) !== []) {
+            throw new ValidationException(['product_types' => 'Choose product types from the list.']);
+        }
+        $data['product_types'] = array_values(array_intersect(ProductTypes::slugs(), $types));
 
         if ($data['pricing'] === 'on_request') {
             $data['price_cents'] = null;

@@ -9,6 +9,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\ValidationException;
 use App\Core\Validator;
+use App\Models\ProductTypes;
 use App\Models\SizeChart;
 use App\Services\WebRevalidator;
 
@@ -45,7 +46,12 @@ final class SizeChartController extends AdminController
     {
         $this->authorize($request, 'editor');
         $id = $this->findOrFail($request);
-        $this->charts->update($id, $this->validated($request));
+        $data = $this->validated($request);
+        $mismatched = $this->charts->stylesOfOtherSystem($id, $data['size_system']);
+        if ($mismatched > 0) {
+            throw new ValidationException(['size_system' => sprintf('%d style(s) with other sizes use this chart. Choose another chart for them first.', $mismatched)]);
+        }
+        $this->charts->update($id, $data);
         $this->revalidator->revalidate(['products']);
 
         return Response::data($this->charts->find($id));
@@ -71,15 +77,17 @@ final class SizeChartController extends AdminController
         return $id;
     }
 
-    /** @return array{name: string, unit: string, measurements: list<string>, size_rows: list<array{size: string, values: list<string>}>, note: ?string} */
+    /** @return array{name: string, size_system: string, unit: string, measurements: list<string>, size_rows: list<array{size: string, values: list<string>}>, note: ?string} */
     private function validated(Request $request): array
     {
         $input = $request->all();
         $data = Validator::make($input, [
             'name' => 'required|string|max:120',
+            'size_system' => 'required|in:' . implode(',', array_keys(ProductTypes::SIZE_SYSTEMS)),
             'unit' => 'required|in:' . implode(',', SizeChart::UNITS),
             'note' => 'nullable|string|max:500',
         ])->validate();
+        $system = $data['size_system'];
 
         $measurements = $input['measurements'] ?? null;
         if (!is_array($measurements) || !array_is_list($measurements) || $measurements === [] || count($measurements) > self::MAX_MEASUREMENTS) {
@@ -105,6 +113,11 @@ final class SizeChartController extends AdminController
             if ($size === '' || mb_strlen($size) > 12) {
                 throw new ValidationException(["size_rows.{$index}.size" => 'Give each row a size (at most 12 characters).']);
             }
+            $normal = ProductTypes::normalizeSize($system, $size);
+            if ($normal === null) {
+                throw new ValidationException(["size_rows.{$index}.size" => sprintf('“%s” is not one of the %s sizes.', $size, $system)]);
+            }
+            $size = $normal;
             if ($values === null || count($values) !== count($names)) {
                 throw new ValidationException(["size_rows.{$index}.values" => 'Fill in one value per measurement.']);
             }
@@ -118,9 +131,17 @@ final class SizeChartController extends AdminController
             }
             $sizes[] = ['size' => $size, 'values' => $clean];
         }
+        if (count(array_unique(array_map('mb_strtolower', array_column($sizes, 'size')))) !== count($sizes)) {
+            throw new ValidationException(['size_rows' => 'Each size can only have one row.']);
+        }
+        $order = ProductTypes::sizesOf($system);
+        if ($order !== null) {
+            usort($sizes, static fn (array $a, array $b): int => array_search($a['size'], $order, true) <=> array_search($b['size'], $order, true));
+        }
 
         return [
             'name' => $data['name'],
+            'size_system' => $system,
             'unit' => $data['unit'],
             'measurements' => $names,
             'size_rows' => $sizes,

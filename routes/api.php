@@ -154,6 +154,7 @@ return static function (Router $router): void {
             $router->put('/posts/{id:\d+}', [Admin\PostController::class, 'update']);
             $router->delete('/posts/{id:\d+}', [Admin\PostController::class, 'destroy']);
 
+            $router->get('/product-types', [Admin\ProductController::class, 'types']);
             $router->get('/products', [Admin\ProductController::class, 'index']);
             $router->post('/products', [Admin\ProductController::class, 'store']);
             $router->get('/products/{id:\d+}', [Admin\ProductController::class, 'show']);

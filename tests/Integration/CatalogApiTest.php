@@ -71,6 +71,8 @@ final class CatalogApiTest extends IntegrationTestCase
         self::assertNotNull($jeans['colors'][0]['hover_image'], 'Cards get a second photo for hover');
 
         self::assertSame(3, $this->send('GET', '/v1/products', ['segment' => 'men'])->decoded()['meta']['pagination']['total']);
+        self::assertSame(7, $this->send('GET', '/v1/products', ['segment' => 'women'])->decoded()['meta']['pagination']['total'], 'The former girls styles are women\'s');
+        self::assertSame(422, $this->send('GET', '/v1/products', ['segment' => 'girls'])->status(), 'Men and women only');
         self::assertSame(['mens-slim-stretch-chinos'], array_column($this->send('GET', '/v1/products', ['type' => 'chino-pant'])->decoded()['data'], 'slug'));
         self::assertSame(['mens-slim-stretch-jeans'], array_column($this->send('GET', '/v1/products', ['q' => '1055'])->decoded()['data'], 'slug'), 'Search by old article number');
         self::assertSame(['womens-denim-maxi-skirt'], array_column($this->send('GET', '/v1/products', ['q' => 'skirt'])->decoded()['data'], 'slug'));
@@ -83,7 +85,18 @@ final class CatalogApiTest extends IntegrationTestCase
     public function testProductPage(): void
     {
         $product = $this->send('GET', '/v1/products/mens-slim-stretch-jeans')->decoded()['data'];
+        self::assertSame('waist', $product['size_system']);
         self::assertSame(['30', '32', '34', '36', '38', '40'], $product['sizes']);
+        self::assertSame(
+            ['fit' => 'Fit', 'rise' => 'Rise', 'length' => 'Inseam', 'fabric' => 'Fabric', 'composition' => 'Composition', 'fabric_weight' => 'Fabric weight', 'stretch' => 'Stretch', 'wash' => 'Wash', 'closure' => 'Closure'],
+            array_column($product['spec_fields'], 'label', 'key'),
+            'Jeans show their own specs, labeled for jeans',
+        );
+        self::assertSame('stretch', $product['specs']['stretch']);
+        self::assertNull($product['specs']['rise']);
+
+        $flare = $this->send('GET', '/v1/products/womens-daisy-print-flare-jeans')->decoded()['data'];
+        self::assertSame(['women', ['26', '28', '30', '32', '34', '36']], [$flare['segment'], $flare['sizes']], 'Former girls style, in women\'s sizes');
         self::assertSame(100, $product['rules']['moq_per_color'], 'MOQ comes from the site settings');
         self::assertSame("Men's pants", $product['size_chart']['name']);
         self::assertSame([], $product['tiers']);
@@ -124,9 +137,12 @@ final class CatalogApiTest extends IntegrationTestCase
             return null;
         };
         self::assertSame(3, $count('men', ''));
-        self::assertSame(2, $count('women', 'jeans-pant'));
+        self::assertSame(6, $count('women', 'jeans-pant'));
         self::assertSame(1, $count('women', 'denim-skirt'));
-        self::assertSame(0, $count('boys', ''));
+        self::assertSame(0, $count('men', 't-shirt'));
+        self::assertSame(0, $count('women', 'polo-shirt'));
+        self::assertNull($count('boys', ''), 'Men and women only');
+        self::assertNull($count('girls', 'jeans-pant'));
         self::assertNull($count('men', 'denim-skirt'), 'No skirt page for men');
     }
 
@@ -184,39 +200,128 @@ final class CatalogApiTest extends IntegrationTestCase
         self::assertSame('Each volume price must be lower than the one before it.', $tiers->decoded()['error']['fields']['tiers']);
 
         $sizes = $this->admin('POST', '/v1/admin/products', ['sizes' => ['S', 's']] + $this->styleInput());
-        self::assertArrayHasKey('sizes', $sizes->decoded()['error']['fields']);
+        self::assertSame('Each size can only be listed once.', $sizes->decoded()['error']['fields']['sizes']);
 
-        // Cargo trousers and chino pants are men only; denim skirts are for women and girls (owner rules).
+        // Cargo trousers and chino pants are men only; denim skirts are women only (owner rules).
         $cargo = $this->admin('POST', '/v1/admin/products', ['segment' => 'women', 'product_type' => 'cargo-trouser'] + $this->styleInput());
         self::assertSame('This type is only for men.', $cargo->decoded()['error']['fields']['product_type']);
-        $skirt = $this->admin('POST', '/v1/admin/products', ['segment' => 'boys', 'product_type' => 'denim-skirt'] + $this->styleInput());
-        self::assertSame('This type is only for women and girls.', $skirt->decoded()['error']['fields']['product_type']);
+        $skirt = $this->admin('POST', '/v1/admin/products', ['segment' => 'men', 'product_type' => 'denim-skirt'] + $this->styleInput());
+        self::assertSame('This type is only for women.', $skirt->decoded()['error']['fields']['product_type']);
+        $girls = $this->admin('POST', '/v1/admin/products', ['segment' => 'girls'] + $this->styleInput());
+        self::assertArrayHasKey('segment', $girls->decoded()['error']['fields']);
+    }
+
+    public function testSpecsAndSizesFollowTheProductType(): void
+    {
+        $types = $this->admin('GET', '/v1/admin/product-types')->decoded()['data'];
+        self::assertSame(['men', 'women'], $types['segments']);
+        $tshirt = array_values(array_filter($types['types'], static fn (array $t): bool => $t['slug'] === 't-shirt'))[0];
+        self::assertSame(['letter', 'other'], $tshirt['size_systems']);
+        self::assertSame(['fit', 'neckline', 'sleeve', 'fabric', 'composition', 'fabric_weight', 'wash'], array_column($tshirt['specs'], 'key'));
+        self::assertSame('Finish', array_column($tshirt['specs'], 'label', 'key')['wash']);
+        self::assertContains('Crew neck', $tshirt['specs'][1]['suggestions']);
+
+        // A T-shirt uses letter sizes (in size order, "2XL" written as "XXL") and keeps only its own specs.
+        $style = $this->admin('POST', '/v1/admin/products', [
+            'name' => 'Test style crew neck T-shirt', 'slug' => 'test-style-tee', 'segment' => 'women', 'product_type' => 't-shirt',
+            'specs' => ['fit' => 'Oversized', 'neckline' => ' Crew neck ', 'fabric_weight' => '220 GSM', 'stretch' => 'stretch', 'rise' => 'High rise', 'closure' => 'Zip fly'],
+            'sizes' => ['xl', 'S', 'M', '2XL'], 'price_cents' => 380,
+        ]);
+        self::assertSame(201, $style->status(), $style->body());
+        $style = $style->decoded()['data'];
+        self::assertSame('letter', $style['size_system'], 'The usual system of the type');
+        self::assertSame(['S', 'M', 'XL', 'XXL'], $style['sizes']);
+        self::assertSame(['fit' => 'Oversized', 'neckline' => 'Crew neck', 'sleeve' => null, 'fabric' => null, 'composition' => null, 'fabric_weight' => '220 GSM', 'wash' => null], $style['specs']);
+        self::assertSame(['neckline' => 'Crew neck'], $style['attributes']);
+        self::assertNull($style['stretch'], 'T-shirts have no stretch setting');
+        self::assertNull($style['closure']);
+
+        $waist = $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['size_system' => 'waist', 'sizes' => ['30', '32']] + $this->tee());
+        self::assertSame('T-shirts use letter sizes or other sizes.', $waist->decoded()['error']['fields']['size_system']);
+        $odd = $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['sizes' => ['M', 'XLL']] + $this->tee());
+        self::assertSame('“XLL” is not one of the letter sizes.', $odd->decoded()['error']['fields']['sizes']);
+        $other = $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['size_system' => 'other', 'sizes' => ['One size']] + $this->tee());
+        self::assertSame(['One size'], $other->decoded()['data']['sizes'], 'Other sizes keep their own text');
+
+        // The same style as jeans: waist sizes (odd ones too, "W33" written as "33"), and the T-shirt details are cleared.
+        $jeans = $this->admin('PUT', "/v1/admin/products/{$style['id']}", [
+            'product_type' => 'jeans-pant', 'size_system' => 'waist', 'sizes' => ['34', 'W33', '30'],
+            'specs' => ['fit' => 'Straight', 'rise' => 'High rise', 'length' => '32 in', 'stretch' => 'non-stretch'],
+        ] + $this->tee());
+        self::assertSame(200, $jeans->status(), $jeans->body());
+        $jeans = $jeans->decoded()['data'];
+        self::assertSame(['30', '33', '34'], $jeans['sizes']);
+        self::assertSame(['rise' => 'High rise', 'length' => '32 in'], $jeans['attributes']);
+        self::assertSame('non-stretch', $jeans['stretch']);
+        $letters = $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['product_type' => 'jeans-pant', 'size_system' => 'waist', 'sizes' => ['S']] + $this->tee());
+        self::assertSame('“S” is not one of the waist sizes.', $letters->decoded()['error']['fields']['sizes']);
+        $stretch = $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['product_type' => 'jeans-pant', 'size_system' => 'waist', 'sizes' => ['30'], 'specs' => ['stretch' => 'very']] + $this->tee());
+        self::assertArrayHasKey('specs.stretch', $stretch->decoded()['error']['fields']);
+
+        // A style can only use a size chart of its own size system.
+        $chart = $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['size_chart_id' => (int) $this->db->fetchValue("SELECT id FROM size_charts WHERE name = 'Men''s pants'")] + $this->tee());
+        self::assertSame('This chart is for waist sizes. Choose a chart for letter sizes.', $chart->decoded()['error']['fields']['size_chart_id']);
+
+        // On the product page: labeled specs of the type, and colors change only the fabric details it shows.
+        self::assertSame(200, $this->admin('PUT', "/v1/admin/products/{$style['id']}", $this->tee())->status(), 'A T-shirt again');
+        $photo = $this->upload();
+        $color = $this->admin('POST', "/v1/admin/products/{$style['id']}/colors", [
+            'code' => 'TEST-902', 'name' => 'Heather gray', 'spec_overrides' => ['composition' => '60% cotton, 40% polyester', 'stretch' => 'stretch', 'neckline' => 'V-neck'],
+            'images' => [['path' => $photo, 'alt' => 'Test T-shirt, front']],
+        ]);
+        self::assertSame(['composition' => '60% cotton, 40% polyester'], $color->decoded()['data']['spec_overrides']);
+        self::assertSame(200, $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['status' => 'active'] + $this->tee())->status());
+        $page = $this->send('GET', '/v1/products/test-style-tee')->decoded()['data'];
+        self::assertSame(['Fit', 'Neckline', 'Sleeve', 'Fabric', 'Composition', 'Fabric weight', 'Finish'], array_column($page['spec_fields'], 'label'));
+        self::assertSame('60% cotton, 40% polyester', $page['colors'][0]['specs']['composition']);
+        self::assertArrayNotHasKey('stretch', $page['colors'][0]['specs']);
+        self::assertSame('letter', $page['size_system']);
     }
 
     public function testSizeChartsAndCategoryTexts(): void
     {
         $bad = $this->admin('POST', '/v1/admin/size-charts', [
-            'name' => 'TEST kids', 'unit' => 'cm', 'measurements' => ['Waist', 'Length'], 'size_rows' => [['size' => '4Y', 'values' => ['52']]],
+            'name' => 'TEST kids', 'size_system' => 'other', 'unit' => 'cm', 'measurements' => ['Waist', 'Length'], 'size_rows' => [['size' => '4Y', 'values' => ['52']]],
         ]);
         self::assertArrayHasKey('size_rows.0.values', $bad->decoded()['error']['fields']);
 
         $chart = $this->admin('POST', '/v1/admin/size-charts', [
-            'name' => 'TEST kids', 'unit' => 'cm', 'measurements' => ['Waist', 'Length'],
-            'size_rows' => [['size' => '4Y', 'values' => ['52', '58']], ['size' => '6Y', 'values' => ['55', '65']]],
+            'name' => 'TEST kids', 'size_system' => 'other', 'unit' => 'cm', 'measurements' => ['Waist', 'Length'],
+            'size_rows' => [['size' => '6Y', 'values' => ['55', '65']], ['size' => '4Y', 'values' => ['52', '58']]],
         ]);
         self::assertSame(201, $chart->status());
-        self::assertSame(['size' => '6Y', 'values' => ['55', '65']], $chart->decoded()['data']['size_rows'][1]);
+        self::assertSame(['size' => '4Y', 'values' => ['52', '58']], $chart->decoded()['data']['size_rows'][1], 'Other sizes keep their order');
+
+        // Letter and waist charts only take their own sizes, and are kept in size order.
+        $tops = $this->admin('POST', '/v1/admin/size-charts', [
+            'name' => 'TEST tops', 'size_system' => 'letter', 'unit' => 'cm', 'measurements' => ['Chest (½)', 'Body length'],
+            'size_rows' => [['size' => 'xl', 'values' => ['60', '76']], ['size' => 'S', 'values' => ['51', '70']], ['size' => '2XL', 'values' => ['63', '78']]],
+        ]);
+        self::assertSame(201, $tops->status(), $tops->body());
+        self::assertSame(['S', 'XL', 'XXL'], array_column($tops->decoded()['data']['size_rows'], 'size'));
+        self::assertSame('letter', $tops->decoded()['data']['size_system']);
+        $wrong = $this->admin('POST', '/v1/admin/size-charts', [
+            'name' => 'TEST waist', 'size_system' => 'waist', 'unit' => 'in', 'measurements' => ['Waist'], 'size_rows' => [['size' => 'M', 'values' => ['32']]],
+        ]);
+        self::assertSame('“M” is not one of the waist sizes.', $wrong->decoded()['error']['fields']['size_rows.0.size']);
+
+        // A chart cannot switch to another size system while styles of its current system use it.
+        $pants = $this->db->fetch("SELECT * FROM size_charts WHERE name = 'Men''s pants'");
+        $switch = $this->admin('PUT', "/v1/admin/size-charts/{$pants['id']}", [
+            'name' => "Men's pants", 'size_system' => 'letter', 'unit' => 'in', 'measurements' => ['Waist'], 'size_rows' => [['size' => 'M', 'values' => ['32']]],
+        ]);
+        self::assertStringContainsString('style(s) with other sizes use this chart', $switch->decoded()['error']['fields']['size_system']);
 
         $categories = $this->admin('GET', '/v1/admin/categories')->decoded()['data'];
-        $boysJeans = array_values(array_filter($categories, static fn (array $c): bool => $c['segment'] === 'boys' && $c['product_type'] === 'jeans-pant'))[0];
-        $this->savedCategory = $boysJeans;
-        $updated = $this->admin('PUT', "/v1/admin/categories/{$boysJeans['id']}", [
-            'title' => "Boys' jeans pants",
+        $menTees = array_values(array_filter($categories, static fn (array $c): bool => $c['segment'] === 'men' && $c['product_type'] === 't-shirt'))[0];
+        $this->savedCategory = $menTees;
+        $updated = $this->admin('PUT', "/v1/admin/categories/{$menTees['id']}", [
+            'title' => "Men's T-shirts",
             'intro_html' => '<p onclick="x()">Made to order.</p><script>alert(1)</script>',
-            'faq' => [['question' => 'Do you make boys jeans?', 'answer' => 'Yes.']],
+            'faq' => [['question' => 'Do you print T-shirts?', 'answer' => 'Yes.']],
         ])->decoded()['data'];
         self::assertSame('<p>Made to order.</p>', $updated['intro_html']);
-        self::assertSame([['question' => 'Do you make boys jeans?', 'answer' => 'Yes.']], $updated['faq']);
+        self::assertSame([['question' => 'Do you print T-shirts?', 'answer' => 'Yes.']], $updated['faq']);
     }
 
     /** @return array<string, mixed> */
@@ -227,12 +332,18 @@ final class CatalogApiTest extends IntegrationTestCase
             'slug' => 'test-style-denim-jacket',
             'segment' => 'men',
             'product_type' => 'denim-jacket',
-            'fit' => 'Regular',
+            'specs' => ['fit' => 'Regular'],
             'description_html' => '<p>Classic trucker jacket.</p>',
             'features' => ['Chest pockets', ''],
             'sizes' => ['S', 'M', 'L'],
             'price_cents' => 1250,
         ];
+    }
+
+    /** @return array<string, mixed> The T-shirt of testSpecsAndSizesFollowTheProductType. */
+    private function tee(): array
+    {
+        return ['name' => 'Test style crew neck T-shirt', 'slug' => 'test-style-tee', 'segment' => 'women', 'product_type' => 't-shirt', 'sizes' => ['S', 'M'], 'price_cents' => 380];
     }
 
     private function upload(): string
