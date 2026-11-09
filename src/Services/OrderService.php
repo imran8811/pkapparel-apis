@@ -52,6 +52,7 @@ final class OrderService
         private readonly OrderDocument $documents,
         private readonly Shipment $shipments,
         private readonly Review $reviews,
+        private readonly StockSettings $stock,
     ) {
     }
 
@@ -290,7 +291,10 @@ final class OrderService
             'next_payment_kind' => $canPay ? $nextKind : null,
             'can_submit_payment' => $canPay,
             'can_cancel' => self::canCancel($order, $payments),
-            'bank' => !$forStaff && $canPay ? $this->bank() : null,
+            // Stock orders are paid into the local accounts (bank, JazzCash, Easypaisa).
+            'bank' => !$forStaff && $canPay ? ($order['kind'] === 'stock' ? $this->stock->payment() : $this->bank()) : null,
+            // Where a stock order the buyer collects is ready.
+            'pickup' => $order['kind'] === 'stock' && $order['shipping_mode'] === 'pickup' ? $this->stock->pickup() : null,
             'confirmed_at' => $order['confirmed_at'],
             'production_due_on' => $order['production_due_on'],
             'production_days_left' => self::daysLeft($order),
@@ -335,6 +339,7 @@ final class OrderService
             'status' => $order['status'],
             'status_label' => self::statusLabel($order['status'], $amounts, $order['kind']),
             'placed_at' => $order['placed_at'],
+            'currency' => $order['currency'],
             'total_pcs' => $order['total_pcs'],
             'shipping_mode' => $order['shipping_mode'],
             'shipping_mode_label' => Order::MODES[$order['shipping_mode']] ?? $order['shipping_mode'],
@@ -369,7 +374,8 @@ final class OrderService
         $estimate = $order['freight_estimate_cents'];
         $freight = $final ?? $estimate;
         $freightStatus = match (true) {
-            $order['shipping_mode'] === 'forwarder' => 'none',
+            // The buyer pays the freight to someone else: their forwarder, or the cargo company of a stock order.
+            in_array($order['shipping_mode'], ['forwarder', 'cargo', 'pickup'], true) => 'none',
             $final !== null => 'final',
             $estimate !== null => 'estimate',
             default => 'quoted',
@@ -475,7 +481,7 @@ final class OrderService
                     'slip_type' => $file['type'] ?? null,
                     'notes' => $data['notes'] ?? null,
                 ]);
-                $note = sprintf('%s of %s reported, transaction %s', $order['kind'] === 'sample' ? 'Payment' : OrderPayment::KINDS[$kind], Format::money($data['amount_cents']), $data['transaction_id']);
+                $note = sprintf('%s of %s reported, transaction %s', $order['kind'] === 'bulk' ? OrderPayment::KINDS[$kind] : 'Payment', Format::money($data['amount_cents'], $order['currency']), $data['transaction_id']);
                 if ($order['status'] === 'awaiting_deposit') {
                     $this->orders->changeStatus($order['id'], 'awaiting_deposit', 'payment_review', 'customer', $customerId, $note);
                 } else {
@@ -523,8 +529,8 @@ final class OrderService
     {
         $presented = [
             'kind' => $payment['kind'],
-            // A sample order is paid in one go, so its "deposit" is simply the payment.
-            'kind_label' => $orderKind === 'sample' ? 'Payment' : (OrderPayment::KINDS[$payment['kind']] ?? $payment['kind']),
+            // Sample and stock orders are paid in one go, so their "deposit" is simply the payment.
+            'kind_label' => $orderKind === 'bulk' ? (OrderPayment::KINDS[$payment['kind']] ?? $payment['kind']) : 'Payment',
             'amount_cents' => $payment['amount_cents'],
             'currency' => $payment['currency'],
             'transaction_id' => $payment['transaction_id'],
@@ -562,6 +568,9 @@ final class OrderService
         if ($kind === 'sample' && isset(Order::SAMPLE_STATUSES[$status])) {
             return Order::SAMPLE_STATUSES[$status];
         }
+        if ($kind === 'stock' && isset(Order::STOCK_STATUSES[$status])) {
+            return Order::STOCK_STATUSES[$status];
+        }
 
         return Order::STATUSES[$status] ?? $status;
     }
@@ -593,9 +602,10 @@ final class OrderService
     private function documentList(array $order, array $payments, bool $forStaff): array
     {
         $documents = [];
-        $sample = $order['kind'] === 'sample';
-        // A sample order waiting for our price has no invoice yet (staff see the draft).
-        if (($order['status'] !== 'cancelled' && $order['status'] !== 'awaiting_price') || $forStaff) {
+        $sample = $order['kind'] !== 'bulk';
+        // A sample order waiting for our price has no invoice yet (staff see the draft). Stock orders have no proforma
+        // invoice: the order page and the emails show what to pay.
+        if ($order['kind'] !== 'stock' && (($order['status'] !== 'cancelled' && $order['status'] !== 'awaiting_price') || $forStaff)) {
             $documents[] = [
                 'kind' => 'proforma',
                 'title' => $sample ? 'Sample invoice' : 'Proforma invoice',

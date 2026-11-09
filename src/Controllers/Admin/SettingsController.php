@@ -11,18 +11,20 @@ use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Models\Settings;
 use App\Services\Commerce;
+use App\Services\StockSettings;
 use App\Services\WebRevalidator;
 
 /**
- * Company info, contacts, addresses, social links, business defaults, factory numbers and the
- * bank account for transfers (admins only). Each group is saved on its own: PUT /v1/admin/settings/{group}.
+ * Company info, contacts, addresses, social links, business defaults, factory numbers, the
+ * bank account for transfers, and the stock settings and payment details (admins only).
+ * Each group is saved on its own: PUT /v1/admin/settings/{group}.
  */
 final class SettingsController extends AdminController
 {
-    private const GROUPS = ['company', 'contact', 'addresses', 'social', 'commerce', 'factory_facts', 'bank'];
+    private const GROUPS = ['company', 'contact', 'addresses', 'social', 'commerce', 'factory_facts', 'bank', 'stock', 'stock_payment'];
 
     /** Groups that are never shown on the public website (/v1/site). */
-    private const PRIVATE_GROUPS = ['bank'];
+    private const PRIVATE_GROUPS = ['bank', 'stock', 'stock_payment'];
 
     private const SOCIAL = ['facebook', 'instagram', 'tiktok', 'linkedin', 'youtube'];
 
@@ -62,6 +64,8 @@ final class SettingsController extends AdminController
             'commerce' => $this->commerce($input, is_array($current) ? $current : []),
             'factory_facts' => $this->factoryFacts($input, is_array($current) ? $current : []),
             'bank' => $this->bank($input),
+            'stock' => $this->stock($input),
+            'stock_payment' => $this->stockPayment($input),
         };
 
         $public = !in_array($group, self::PRIVATE_GROUPS, true);
@@ -253,6 +257,76 @@ final class SettingsController extends AdminController
         }
 
         return $bank;
+    }
+
+    /**
+     * Stock orders: the smallest order, days to send a paid order, days before an unpaid one is cancelled, when a color
+     * counts as running low, and where buyers collect their orders. Private: read through the stock pages and the admin.
+     *
+     * @param array<string, mixed> $input
+     * @return array<string, mixed>
+     */
+    private function stock(array $input): array
+    {
+        $data = Validator::make($input, [
+            'min_sets_per_order' => 'required|int|min:1|max:1000',
+            'dispatch_days' => 'required|int|min:1|max:60',
+            'payment_days' => 'required|int|min:1|max:60',
+            'low_stock_sets' => 'nullable|int|min:0|max:1000',
+            'pickup_address' => 'nullable|string|max:300',
+            'pickup_hours' => 'nullable|string|max:160',
+        ])->validate();
+
+        return [
+            'min_sets_per_order' => $data['min_sets_per_order'],
+            'dispatch_days' => $data['dispatch_days'],
+            'payment_days' => $data['payment_days'],
+            'low_stock_sets' => $data['low_stock_sets'] ?? 3,
+            'pickup_address' => ($data['pickup_address'] ?? '') === '' ? null : $data['pickup_address'],
+            'pickup_hours' => ($data['pickup_hours'] ?? '') === '' ? null : $data['pickup_hours'],
+        ];
+    }
+
+    /**
+     * Where stock buyers pay: a bank account, JazzCash and Easypaisa (any of them). Private: shown only to the buyer
+     * of a stock order with an amount due.
+     *
+     * @param array<string, mixed> $input
+     * @return array<string, ?string>
+     */
+    private function stockPayment(array $input): array
+    {
+        $data = Validator::make($input, [
+            'bank_name' => 'nullable|string|max:160',
+            'account_title' => 'nullable|string|max:160',
+            'account_number' => 'nullable|string|max:60',
+            'iban' => ['nullable', 'string', 'max:42', 'regex:/^[A-Za-z]{2}[0-9]{2}[A-Za-z0-9 ]{8,36}$/'],
+            'jazzcash_name' => 'nullable|string|max:120',
+            'jazzcash_number' => ['nullable', 'string', 'regex:/^[0-9+][0-9 -]{9,17}$/'],
+            'easypaisa_name' => 'nullable|string|max:120',
+            'easypaisa_number' => ['nullable', 'string', 'regex:/^[0-9+][0-9 -]{9,17}$/'],
+            'notes' => 'nullable|string|max:500',
+        ])->validate();
+
+        $payment = [];
+        foreach (StockSettings::PAYMENT_FIELDS as $key) {
+            $value = $data[$key] ?? null;
+            $payment[$key] = $value === null || $value === '' ? null : $value;
+        }
+        if ($payment['iban'] !== null) {
+            $payment['iban'] = strtoupper(trim((string) preg_replace('/\s+/', ' ', $payment['iban'])));
+        }
+        if (($payment['account_number'] !== null || $payment['iban'] !== null) && $payment['account_title'] === null) {
+            throw new ValidationException(['account_title' => 'Enter the account title as well.']);
+        }
+        if ($payment['jazzcash_number'] !== null && $payment['jazzcash_name'] === null) {
+            throw new ValidationException(['jazzcash_name' => 'Enter the name on the JazzCash account as well.']);
+        }
+        if ($payment['easypaisa_number'] !== null && $payment['easypaisa_name'] === null) {
+            throw new ValidationException(['easypaisa_name' => 'Enter the name on the Easypaisa account as well.']);
+        }
+
+        return $payment;
     }
 
     /**

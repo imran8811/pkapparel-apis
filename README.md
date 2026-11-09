@@ -165,7 +165,17 @@ Ready men's and boys' jeans sold from stock on hand, separate from the made-to-o
 - **Admin (editors and admins):** `/v1/admin/stock/styles` (list, create, show, update, delete), `POST …/styles/{id}/colors` (with optional opening stock, logged as received), `PUT`/`DELETE /v1/admin/stock/colors/{id}`, `POST /v1/admin/stock/colors/{id}/stock` (`{reason, sets, note}`; for `correction`, `sets` is the number counted) and `GET /v1/admin/stock/movements?style_id=&color_id=`.
   - A style needs an active color with a photo before it is shown. Renaming a shown style redirects its old address.
 - **Pages:** `stock-terms` and `stock-privacy` (Admin → Legal pages) are the stock pages' terms (with returns within 7 days) and privacy.
-- Orders are taken by WhatsApp or phone for now; staff record the sets sold as a stock change.
+- **Stock cart** (`/v1/stock/cart`, guests and buyers like `/v1/cart`; `App\Services\StockCartService`): sets of stock colors (`stock_cart_lines`), in the same cart as the wholesale lines. A color can never be added beyond its sets in stock; the summary lists what blocks the checkout (sold out, fewer sets than in the cart, below `stock.min_sets_per_order`). A guest's stock lines move into the account at login, before the wholesale merge (which deletes the guest cart).
+- **Stock accounts:** `POST /v1/account/signup` with `area: "stock"` asks for the shop (`company_name`), `city`, `phone` and `business_type` (`retailer` or `wholesaler`); the country is set by the API. `customers.channel` (`wholesale` or `stock`) makes the confirmation and password emails link to `/stock/…` (`forgot-password` also takes `area`).
+- **Stock orders** (`orders.kind = 'stock'`, `App\Services\StockOrders`): `GET /v1/account/stock-checkout`, then `POST /v1/account/stock-orders` `{delivery: cargo|pickup, address_id, cargo_company, notes, accept_terms, expected_total_cents}`.
+  - In rupees (`currency = 'PKR'`, amounts in paisa), paid in full before dispatch: `deposit_percent` 100, no freight (`freight_status: none`), no proforma invoice. `order_lines.stock_color_id` and `sets` record what was bought.
+  - `shipping_mode` is `cargo` (we book the cargo to the buyer's city; the buyer pays it on arrival; `forwarder.name` is the cargo company they would like) or `pickup` (`address.pickup = true`).
+  - The buyer reports the payment like any other (`/v1/account/orders/{orderNo}/payments`); the order page shows the stock payment details (`bank`).
+  - **Stock is not held for an order.** Confirming the payment (`PaymentReview`) takes the sets out of stock (`stock_movements` reason `sold`, with the order); when a color is short, the confirmation fails with 409 and nothing changes. Cancelling a confirmed order puts the sets back (reason `cancelled`).
+  - Then `POST /v1/admin/orders/{id}/ship` (cargo company, bilty number) and `…/deliver`, or `POST /v1/admin/orders/{id}/collected` for a collected order.
+  - Emails use the stock wording, rupees, links to `/stock/account/orders/{orderNo}`, the local payment details and the stock email layout (no country). The receipt is `templates/pdf/stock-receipt.php`.
+  - The daily job reminds the buyer of an unpaid stock order after 2 days and cancels it after `stock.payment_days` (7).
+- **Settings** (Admin → Settings, admins): `stock` (`min_sets_per_order`, `dispatch_days`, `payment_days`, `pickup_address`, `pickup_hours`) and `stock_payment` (bank account, JazzCash and Easypaisa), both private.
 
 ### Redirects and the launch checklist
 

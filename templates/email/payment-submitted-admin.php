@@ -14,8 +14,8 @@ $row = static fn (string $label, ?string $value): string => $value === null || $
 <p style="margin:0 0 16px;"><strong><?= $e($order['customer']['company_name']) ?></strong> reported a bank transfer. Please check it against the bank statement before confirming it.</p>
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 18px;">
   <?= $row('Payment', $payment['kind_label']) ?>
-  <?= $row('Amount', Format::money($payment['amount_cents'])) ?>
-  <?= $row('Amount due', Format::money($order['amounts']['due_now_cents'])) ?>
+  <?= $row('Amount', Format::money($payment['amount_cents'], (string) ($order['currency'] ?? 'USD'))) ?>
+  <?= $row('Amount due', Format::money($order['amounts']['due_now_cents'], (string) ($order['currency'] ?? 'USD'))) ?>
   <?= $row('Transaction ID', $payment['transaction_id']) ?>
   <?= $row('Transfer date', Format::date($payment['transferred_on'])) ?>
   <?= $row('Sent by', $payment['payer_name']) ?>

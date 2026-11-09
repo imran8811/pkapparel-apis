@@ -13,10 +13,13 @@ final class Format
     /** PK Apparel works in Lahore: order numbers and document dates use Pakistan time. */
     public const BUSINESS_TIMEZONE = 'Asia/Karachi';
 
-    /** 123450 → "$1,234.50" */
+    /** 123450 → "$1,234.50"; in rupees (stock orders) 690000 → "Rs 6,900" (paisa only when there are any). */
     public static function money(int $cents, string $currency = 'USD'): string
     {
         $sign = $cents < 0 ? '-' : '';
+        if ($currency === 'PKR') {
+            return $sign . 'Rs ' . number_format(abs($cents) / 100, abs($cents) % 100 === 0 ? 0 : 2, '.', ',');
+        }
         $amount = number_format(abs($cents) / 100, 2, '.', ',');
 
         return $currency === 'USD' ? "{$sign}\${$amount}" : "{$sign}{$amount} {$currency}";

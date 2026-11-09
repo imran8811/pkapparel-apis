@@ -25,8 +25,8 @@ final class StockLevels
     }
 
     /**
-     * @param string $reason a StockMovement::REASONS key: received and returned add $sets, sold and damaged take
-     *                       $sets out, correction makes $sets the new total (the number counted)
+     * @param string $reason a StockMovement::REASONS key: received, returned and cancelled add $sets, sold and damaged
+     *                       take $sets out, correction makes $sets the new total (the number counted)
      * @return int the sets in stock after the change
      */
     public function change(int $colorId, string $reason, int $sets, ?string $note, ?int $staffId, ?int $orderId = null): int
@@ -41,7 +41,7 @@ final class StockLevels
         return $this->db->transaction(function () use ($colorId, $reason, $sets, $note, $staffId, $orderId): int {
             $current = $this->colors->lockSets($colorId) ?? throw HttpException::notFound('This color does not exist.');
             $after = match ($reason) {
-                'received', 'returned' => $current + $sets,
+                'received', 'returned', 'cancelled' => $current + $sets,
                 'sold', 'damaged' => $current - $sets,
                 default => $sets,
             };

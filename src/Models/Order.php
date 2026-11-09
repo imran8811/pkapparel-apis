@@ -9,11 +9,14 @@ use App\Core\Database;
 /**
  * Orders with frozen copies of the lines, prices, buyer and address.
  * Status changes always go through changeStatus(), which also writes the timeline.
- * kind "bulk" is a wholesale order; kind "sample" is a sample order, paid in full before dispatch.
+ * kind "bulk" is a wholesale order; kind "sample" is a sample order, paid in full before dispatch; kind "stock" is an
+ * order of stock styles by set, in rupees, paid in full before it goes by cargo or is collected (StockOrders). For a
+ * stock order, "forwarder" holds the cargo company the buyer prefers, and a collected order's "address" is
+ * {pickup: true, …the buyer's contact}.
  */
 final class Order
 {
-    public const KINDS = ['bulk', 'sample'];
+    public const KINDS = ['bulk', 'sample', 'stock'];
 
     public const STATUSES = [
         'awaiting_price' => 'Waiting for our price',
@@ -28,12 +31,27 @@ final class Order
         'cancelled' => 'Cancelled',
     ];
 
-    public const MODES = ['air' => 'Air freight', 'sea' => 'Sea freight', 'forwarder' => 'Your own forwarder', 'courier' => 'Express courier'];
+    public const MODES = [
+        'air' => 'Air freight',
+        'sea' => 'Sea freight',
+        'forwarder' => 'Your own forwarder',
+        'courier' => 'Express courier',
+        'cargo' => 'Cargo to your city',
+        'pickup' => 'Collect from us',
+    ];
 
     /** How sample orders name the statuses they share with bulk orders. */
     public const SAMPLE_STATUSES = [
         'awaiting_deposit' => 'Awaiting payment',
         'confirmed' => 'Preparing your samples',
+    ];
+
+    /** How stock orders name their statuses. */
+    public const STOCK_STATUSES = [
+        'awaiting_deposit' => 'Awaiting payment',
+        'confirmed' => 'Paid, being packed',
+        'shipped' => 'Sent by cargo',
+        'delivered' => 'Delivered',
     ];
 
     /** Statuses in which an order still counts as active for the buyer. */
@@ -337,6 +355,9 @@ final class Order
             return [
                 'product_id' => $row['product_id'] === null ? null : (int) $row['product_id'],
                 'color_id' => $row['color_id'] === null ? null : (int) $row['color_id'],
+                // Stock orders: the stock color and the number of sets (qty is the pieces, unit_price_cents the set price).
+                'stock_color_id' => ($row['stock_color_id'] ?? null) === null ? null : (int) $row['stock_color_id'],
+                'sets' => ($row['sets'] ?? null) === null ? null : (int) $row['sets'],
                 'style_no' => $row['style_no'],
                 'style_name' => (string) $row['style_name'],
                 'style_slug' => (string) $row['style_slug'],

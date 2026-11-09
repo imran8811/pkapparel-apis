@@ -1,11 +1,13 @@
 <?php
 /**
- * Shared email layout. Variables: $content (HTML), $preheader, $contact, $addresses (from settings), $e (escaper).
+ * Shared email layout. Variables: $content (HTML), $preheader, $contact, $addresses (from settings), $e (escaper),
+ * $stock (bool: an email about the stock pages, with their tagline and without the country).
  * Inline styles only: email clients ignore stylesheets.
  */
 $preheader = $preheader ?? '';
 $contact = is_array($contact ?? null) ? $contact : [];
 $factory = is_array($addresses ?? null) && isset($addresses[0]) ? $addresses[0] : null;
+$stock = (bool) ($stock ?? false);
 ?>
 <!doctype html>
 <html lang="en">
@@ -23,7 +25,7 @@ $factory = is_array($addresses ?? null) && isset($addresses[0]) ? $addresses[0] 
         <tr>
           <td style="background:#0b132b;padding:22px 28px;">
             <span style="font-size:22px;font-weight:bold;color:#ffffff;letter-spacing:-0.5px;">PK Apparel</span>
-            <span style="display:block;margin-top:4px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#f09a55;">Apparel manufacturer · Made to order</span>
+            <span style="display:block;margin-top:4px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#f09a55;"><?= $stock ? 'Jeans in stock · Sold by set' : 'Apparel manufacturer · Made to order' ?></span>
           </td>
         </tr>
         <tr>
@@ -34,7 +36,7 @@ $factory = is_array($addresses ?? null) && isset($addresses[0]) ? $addresses[0] 
         <tr>
           <td style="padding:18px 28px;background:#fbfaf7;border-top:1px dashed #e6e0d4;font-size:12px;line-height:1.6;color:#5c6170;">
             <?php if ($factory !== null): ?>
-              PK Apparel · <?= $e($factory['line'] . ', ' . $factory['city'] . ', ' . $factory['country']) ?><br>
+              PK Apparel · <?= $e($factory['line'] . ', ' . $factory['city'] . ($stock ? '' : ', ' . $factory['country'])) ?><br>
             <?php endif; ?>
             <?php if (!empty($contact['phone'])): ?>WhatsApp / phone: <?= $e($contact['phone']) ?> · <?php endif; ?>
             <a href="mailto:<?= $e($contact['email'] ?? 'info@pkapparel.com') ?>" style="color:#0048ac;"><?= $e($contact['email'] ?? 'info@pkapparel.com') ?></a>

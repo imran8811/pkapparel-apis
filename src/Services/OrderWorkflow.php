@@ -35,6 +35,7 @@ final class OrderWorkflow
         private readonly OrderPdfs $pdfs,
         private readonly OrderMailer $mailer,
         private readonly Logger $logger,
+        private readonly StockOrders $stock,
     ) {
     }
 
@@ -70,6 +71,10 @@ final class OrderWorkflow
         $this->expect($order, [...self::ACTIVE, 'on_hold'], 'This order can no longer be cancelled.');
         $this->db->transaction(function () use ($order, $staff, $reason): void {
             $this->change($order, 'cancelled', $staff, $reason, ['cancelled_at' => gmdate('Y-m-d H:i:s'), 'cancel_reason' => $reason, 'status_before_hold' => null]);
+            // A paid stock order's sets left the stock when its payment was confirmed: they go back.
+            if ($order['kind'] === 'stock' && $order['confirmed_at'] !== null) {
+                $this->stock->restock($order, $staff['id']);
+            }
             // Samples deducted from this order are deducted from the buyer's next order instead.
             $released = $this->orders->releaseCredits($order['id']);
             if ($released !== []) {
@@ -117,6 +122,9 @@ final class OrderWorkflow
      */
     public function setCharges(array $order, array $staff, ?int $freightCents, bool $clearFreight, array $addonPrices): void
     {
+        if ($order['kind'] === 'stock') {
+            throw new HttpException(409, 'wrong_kind', 'A stock order has no freight or add-ons: the buyer pays the cargo on arrival.');
+        }
         if (in_array($order['status'], ['shipped', 'delivered', 'cancelled'], true)) {
             throw new HttpException(409, 'locked', 'The charges of a shipped or cancelled order cannot change.');
         }
@@ -162,8 +170,8 @@ final class OrderWorkflow
      */
     public function readyToShip(array $order, array $staff): void
     {
-        if ($order['kind'] === 'sample') {
-            throw new HttpException(409, 'wrong_kind', 'Sample orders are paid in full: mark them as shipped when they are ready.');
+        if ($order['kind'] !== 'bulk') {
+            throw new HttpException(409, 'wrong_kind', 'This order is paid in full: mark it as shipped (or collected) when it is ready.');
         }
         $this->expect($order, ['confirmed', 'in_production'], 'Only an order in production can be marked ready to ship.');
         if ($order['shipping_mode'] !== 'forwarder' && $order['freight_final_cents'] === null && $order['freight_estimate_cents'] === null) {
@@ -195,23 +203,29 @@ final class OrderWorkflow
      */
     public function ship(array $order, array $staff, array $data, ?string $unpaidReason): void
     {
-        // Samples ship once they are made (paid in full); bulk orders after "ready to ship" and the balance.
+        // Samples ship once they are made (paid in full); stock orders by cargo once paid; bulk orders after "ready to
+        // ship" and the balance.
         if ($order['kind'] === 'sample') {
             $this->expect($order, ['confirmed', 'in_production'], 'Samples ship after the payment is confirmed.');
+        } elseif ($order['kind'] === 'stock') {
+            if ($order['shipping_mode'] !== 'cargo') {
+                throw new HttpException(409, 'wrong_delivery', 'The buyer collects this order: mark it as collected instead.');
+            }
+            $this->expect($order, ['confirmed'], 'A stock order is sent once its payment is confirmed.');
         } else {
             $this->expect($order, ['ready_to_ship'], 'Mark the order ready to ship first.');
         }
         $amounts = OrderService::amounts($order, $this->orders->addons($order['id']));
         $unpaid = $amounts['total_cents'] - $amounts['paid_cents'];
         if ($unpaid > 0 && ($unpaidReason === null || $unpaidReason === '')) {
-            throw new HttpException(409, 'not_paid', sprintf('%s of this order is not paid yet. Give a reason to ship it anyway.', Format::money($unpaid)));
+            throw new HttpException(409, 'not_paid', sprintf('%s of this order is not paid yet. Give a reason to ship it anyway.', Format::money($unpaid, $order['currency'])));
         }
 
         $this->db->transaction(function () use ($order, $staff, $data, $unpaid, $unpaidReason): void {
             $this->shipments->save($order['id'], $data, $staff['id']);
             $this->change($order, 'shipped', $staff, null, ['shipped_at' => gmdate('Y-m-d H:i:s')]);
             if ($unpaid > 0) {
-                $this->orders->addEvent($order['id'], 'note', null, null, sprintf('Shipped with %s still unpaid: %s', Format::money($unpaid), $unpaidReason), 'staff', $staff['id'], false);
+                $this->orders->addEvent($order['id'], 'note', null, null, sprintf('Shipped with %s still unpaid: %s', Format::money($unpaid, $order['currency']), $unpaidReason), 'staff', $staff['id'], false);
             }
         });
         $this->notify($order['id'], fn (array $view) => $this->mailer->shipped($view));
@@ -225,6 +239,22 @@ final class OrderWorkflow
     {
         $this->expect($order, ['shipped'], 'Only a shipped order can be marked delivered.');
         $this->change($order, 'delivered', $staff, null, ['delivered_at' => gmdate('Y-m-d H:i:s')]);
+        $this->notify($order['id'], fn (array $view) => $this->mailer->delivered($view));
+    }
+
+    /**
+     * The buyer collected a paid stock order: it is delivered.
+     *
+     * @param array<string, mixed> $order
+     * @param array{id: int} $staff
+     */
+    public function collected(array $order, array $staff): void
+    {
+        if ($order['kind'] !== 'stock' || $order['shipping_mode'] !== 'pickup') {
+            throw new HttpException(409, 'wrong_delivery', 'Only a stock order the buyer collects can be marked as collected.');
+        }
+        $this->expect($order, ['confirmed'], 'The order can be collected once its payment is confirmed.');
+        $this->change($order, 'delivered', $staff, 'Collected by the buyer', ['delivered_at' => gmdate('Y-m-d H:i:s')]);
         $this->notify($order['id'], fn (array $view) => $this->mailer->delivered($view));
     }
 

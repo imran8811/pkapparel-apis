@@ -21,7 +21,10 @@ final class Customer
     ];
 
     /** Profile fields the buyer can change. */
-    public const PROFILE = ['company_name', 'contact_name', 'business_type', 'country_code', 'phone', 'website'];
+    public const PROFILE = ['company_name', 'contact_name', 'business_type', 'country_code', 'city', 'phone', 'website'];
+
+    /** Where the buyer opened the account: account emails link to that part of the website. */
+    public const CHANNELS = ['wholesale', 'stock'];
 
     public function __construct(private readonly Database $db)
     {
@@ -45,11 +48,12 @@ final class Customer
     }
 
     /** @param array<string, mixed> $profile */
-    public function create(string $email, string $password, array $profile): int
+    public function create(string $email, string $password, array $profile, string $channel = 'wholesale'): int
     {
         return $this->db->insert('customers', [
             'email' => self::normaliseEmail($email),
             'password_hash' => password_hash($password, PASSWORD_DEFAULT),
+            'channel' => in_array($channel, self::CHANNELS, true) ? $channel : 'wholesale',
         ] + array_intersect_key($profile, array_flip(self::PROFILE)));
     }
 
@@ -157,8 +161,10 @@ final class Customer
             'contact_name' => (string) $row['contact_name'],
             'business_type' => (string) $row['business_type'],
             'country_code' => (string) $row['country_code'],
+            'city' => ($row['city'] ?? null) === null ? null : (string) $row['city'],
             'phone' => (string) $row['phone'],
             'website' => $row['website'] === null ? null : (string) $row['website'],
+            'channel' => (string) ($row['channel'] ?? 'wholesale'),
             'created_at' => self::time($row['created_at']),
         ];
     }

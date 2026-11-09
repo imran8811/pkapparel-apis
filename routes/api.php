@@ -15,6 +15,7 @@ use App\Controllers\RedirectController;
 use App\Controllers\ReviewController;
 use App\Controllers\ShopController;
 use App\Controllers\SiteController;
+use App\Controllers\StockCartController;
 use App\Controllers\StockController;
 use App\Core\Router;
 use App\Middleware\IdentifyBuyer;
@@ -76,6 +77,14 @@ return static function (Router $router): void {
             $router->delete('/lines/{colorId:\d+}', [CartController::class, 'destroy']);
         }, [IdentifyBuyer::class]);
 
+        // Stock cart: sets of stock colors (the same cart, guests and buyers)
+        $router->group('/stock/cart', static function (Router $router): void {
+            $router->get('', [StockCartController::class, 'show']);
+            $router->post('/lines', [StockCartController::class, 'add']);
+            $router->put('/lines/{colorId:\d+}', [StockCartController::class, 'update']);
+            $router->delete('/lines/{colorId:\d+}', [StockCartController::class, 'destroy']);
+        }, [IdentifyBuyer::class]);
+
         // Buyer accounts
         $router->post('/account/signup', [Account\AuthController::class, 'signup']);
         $router->post('/account/login', [Account\AuthController::class, 'login']);
@@ -96,6 +105,8 @@ return static function (Router $router): void {
             $router->delete('/addresses/{id:\d+}', [Account\AddressController::class, 'destroy']);
 
             $router->get('/checkout', [Account\OrderController::class, 'checkout']);
+            $router->get('/stock-checkout', [Account\StockOrderController::class, 'checkout']);
+            $router->post('/stock-orders', [Account\StockOrderController::class, 'store']);
             $router->post('/sample-orders/quote', [Account\SampleOrderController::class, 'quote']);
             $router->post('/sample-orders', [Account\SampleOrderController::class, 'store']);
             $router->get('/orders', [Account\OrderController::class, 'index']);
@@ -209,6 +220,7 @@ return static function (Router $router): void {
             $router->post('/orders/{id:\d+}/send-price', [Admin\OrderController::class, 'sendPrice']);
             $router->post('/orders/{id:\d+}/ship', [Admin\OrderController::class, 'ship']);
             $router->post('/orders/{id:\d+}/deliver', [Admin\OrderController::class, 'deliver']);
+            $router->post('/orders/{id:\d+}/collected', [Admin\OrderController::class, 'collected']);
             $router->post('/orders/{id:\d+}/notes', [Admin\OrderController::class, 'note']);
             $router->put('/orders/{id:\d+}/stages/{stage:[a-z]+}', [Admin\ProductionController::class, 'stage']);
             $router->post('/orders/{id:\d+}/photos', [Admin\ProductionController::class, 'upload']);

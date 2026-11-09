@@ -51,7 +51,10 @@ final class OrderPdfs
      */
     public function receipt(array $order, array $payment): string
     {
-        return $this->render('receipt', ['order' => $order, 'payment' => $payment], 'Receipt ' . $payment['receipt_no']);
+        // Stock orders: in rupees, with the sets, and without the country or tax numbers.
+        $template = ($order['kind'] ?? 'bulk') === 'stock' ? 'stock-receipt' : 'receipt';
+
+        return $this->render($template, ['order' => $order, 'payment' => $payment], 'Receipt ' . $payment['receipt_no']);
     }
 
     /** "PI-PK-261016-482.pdf", or "Sample-invoice-PK-261016-482.pdf" for a sample order. */

@@ -9,14 +9,21 @@ use App\Core\Database;
 /** The log of every change to a stock color's sets in stock: what changed, why, and who changed it. */
 final class StockMovement
 {
-    /** Why stock changed. Sets received or returned are added; sets sold or damaged are taken out; a correction sets the counted total. */
+    /**
+     * Why stock changed. Sets received, returned or back from a cancelled order are added; sets sold or damaged are
+     * taken out; a correction sets the counted total.
+     */
     public const REASONS = [
         'received' => 'Received',
         'returned' => 'Returned',
         'sold' => 'Sold',
         'damaged' => 'Damaged or lost',
         'correction' => 'Count correction',
+        'cancelled' => 'Order cancelled',
     ];
+
+    /** The reasons staff choose when changing stock by hand ("cancelled" is recorded when a paid order is cancelled). */
+    public const MANUAL_REASONS = ['received', 'returned', 'sold', 'damaged', 'correction'];
 
     public function __construct(private readonly Database $db)
     {

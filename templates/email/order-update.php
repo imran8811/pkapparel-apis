@@ -2,13 +2,15 @@
 /**
  * Most order emails to the buyer: a title, a short text, key facts, optional bank details and a button.
  * Variables: $order (presented), $title, $intro (string), $facts (label => value), $paragraphs (list of strings),
- * $bank (array|null|false: false = no bank block), $button (array{label, url}|null), $e (escaper).
+ * $bank (array|null|false: false = no bank block), $stockPayment (the same for a stock order's local payment details),
+ * $button (array{label, url}|null), $e (escaper).
  */
 
 $facts = $facts ?? [];
 $paragraphs = $paragraphs ?? [];
 $button = $button ?? null;
 $showBank = isset($bank) && $bank !== false;
+$showStockPayment = isset($stockPayment) && $stockPayment !== false;
 ?>
 <h1 style="margin:0 0 12px;font-size:20px;"><?= $e($title) ?></h1>
 <p style="margin:0 0 6px;font-size:13px;color:#5c6170;">Order <strong style="font-family:monospace;color:#070c1f;"><?= $e($order['order_no']) ?></strong><?= $order['buyer_reference'] ? ' · your reference ' . $e($order['buyer_reference']) : '' ?></p>
@@ -33,6 +35,10 @@ $showBank = isset($bank) && $bank !== false;
 
 <?php if ($showBank): ?>
   <?php require __DIR__ . '/partials/bank-details.php'; ?>
+<?php endif; ?>
+
+<?php if ($showStockPayment): ?>
+  <?php require __DIR__ . '/partials/stock-payment.php'; ?>
 <?php endif; ?>
 
 <?php if ($button !== null): ?>

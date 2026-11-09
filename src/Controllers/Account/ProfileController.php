@@ -33,21 +33,38 @@ final class ProfileController
         return Response::data(Customer::present(AuthController::customer($request)));
     }
 
-    /** PUT /v1/account: profile; a new email address needs the current password and is confirmed again. */
+    /**
+     * PUT /v1/account: profile; a new email address needs the current password and is confirmed again.
+     * A stock account (opened on the stock pages) has its shop, city and phone instead of a country and website.
+     */
     public function update(Request $request): Response
     {
         $customer = AuthController::customer($request);
-        $data = Validator::make($request->all(), [
-            'email' => 'required|email',
-            'company_name' => 'required|string|min:2|max:160',
-            'contact_name' => 'required|string|min:2|max:120',
-            'business_type' => 'required|in:' . implode(',', array_keys(Customer::BUSINESS_TYPES)),
-            'country_code' => 'required|country',
-            'phone' => 'required|phone',
-            'website' => 'nullable|url|max:255',
-            'current_password' => 'nullable|string|max:200',
-        ])->validate();
-        $data['website'] ??= null;
+        if (($customer['channel'] ?? 'wholesale') === 'stock') {
+            $data = Validator::make($request->all(), [
+                'email' => 'required|email',
+                'company_name' => 'required|string|min:2|max:160',
+                'contact_name' => 'required|string|min:2|max:120',
+                'business_type' => 'required|in:retailer,wholesaler',
+                'city' => 'required|string|min:2|max:120',
+                'phone' => 'required|phone',
+                'current_password' => 'nullable|string|max:200',
+            ])->validate();
+            $data['country_code'] = (string) $customer['country_code'];
+            $data['website'] = null;
+        } else {
+            $data = Validator::make($request->all(), [
+                'email' => 'required|email',
+                'company_name' => 'required|string|min:2|max:160',
+                'contact_name' => 'required|string|min:2|max:120',
+                'business_type' => 'required|in:' . implode(',', array_keys(Customer::BUSINESS_TYPES)),
+                'country_code' => 'required|country',
+                'phone' => 'required|phone',
+                'website' => 'nullable|url|max:255',
+                'current_password' => 'nullable|string|max:200',
+            ])->validate();
+            $data['website'] ??= null;
+        }
         $id = (int) $customer['id'];
 
         $emailChanged = Customer::normaliseEmail($data['email']) !== Customer::normaliseEmail((string) $customer['email']);

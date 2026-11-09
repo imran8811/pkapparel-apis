@@ -91,7 +91,7 @@ final class StockColorController extends AdminController
         $color = $this->colors->find($this->id($request)) ?? throw HttpException::notFound('This color does not exist.');
         $style = $this->styles->find($color['style_id']) ?? throw HttpException::notFound('This style does not exist.');
         $data = Validator::make($request->all(), [
-            'reason' => 'required|in:' . implode(',', array_keys(StockMovement::REASONS)),
+            'reason' => 'required|in:' . implode(',', StockMovement::MANUAL_REASONS),
             'sets' => 'required|int|min:0|max:1000000',
             'note' => 'nullable|string|max:500',
         ])->validate();

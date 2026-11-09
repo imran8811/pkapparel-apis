@@ -17,6 +17,7 @@ use App\Models\StockMovement;
 use App\Models\StockStyle;
 use App\Services\Redirects;
 use App\Services\StockCatalog;
+use App\Services\StockSettings;
 use App\Services\WebRevalidator;
 
 /**
@@ -32,6 +33,7 @@ final class StockStyleController extends AdminController
         private readonly HtmlSanitizer $sanitizer,
         private readonly WebRevalidator $revalidator,
         private readonly Redirects $redirects,
+        private readonly StockSettings $settings,
     ) {
     }
 
@@ -45,7 +47,8 @@ final class StockStyleController extends AdminController
             'q' => 'nullable|string|max:80',
         ])->validate();
 
-        $result = $this->styles->adminList($filters['status'] ?? null, $filters['q'] ?? null, $page, $perPage);
+        $lowStock = $this->settings->lowStockSets();
+        $result = $this->styles->adminList($filters['status'] ?? null, $filters['q'] ?? null, $page, $perPage, $lowStock);
         $items = array_map(static fn (array $s): array => [
             'id' => $s['id'],
             'slug' => $s['slug'],
@@ -58,11 +61,14 @@ final class StockStyleController extends AdminController
             'is_featured' => $s['is_featured'],
             'color_count' => $s['color_count'],
             'sets_in_stock' => $s['sets_in_stock'],
+            // Shown colors running low (some sets, at most the low-stock setting) and sold out.
+            'low_count' => $s['low_count'],
+            'sold_out_count' => $s['sold_out_count'],
             'thumbnail' => $s['thumbnail'] ?? null,
             'updated_at' => $s['updated_at'],
         ], $result['items']);
 
-        return Response::data($items, self::paginationMeta($page, $perPage, $result['total']) + ['counts' => $this->styles->countByStatus()]);
+        return Response::data($items, self::paginationMeta($page, $perPage, $result['total']) + ['counts' => $this->styles->countByStatus(), 'low_stock_sets' => $lowStock]);
     }
 
     /** GET /v1/admin/stock/styles/{id}: the style with all its colors, photos and sets in stock. */
@@ -146,6 +152,7 @@ final class StockStyleController extends AdminController
             static fn (array $color): int => $color['is_active'] ? $color['sets_in_stock'] : 0,
             $style['colors'],
         ));
+        $style['low_stock_sets'] = $this->settings->lowStockSets();
 
         return $style;
     }

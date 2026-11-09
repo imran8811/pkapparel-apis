@@ -10,6 +10,7 @@ use App\Core\Response;
 use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Models\CustomerAddress;
+use App\Services\StockSettings;
 
 /** The buyer's delivery addresses (address book). */
 final class AddressController
@@ -68,7 +69,13 @@ final class AddressController
     /** @return array<string, mixed> */
     private static function validated(Request $request): array
     {
-        return Validator::make($request->all(), [
+        $input = $request->all();
+        // Stock buyers are local: an address without a country is in the stock country.
+        if (trim((string) ($input['country_code'] ?? '')) === '' && (AuthController::customer($request)['channel'] ?? 'wholesale') === 'stock') {
+            $input['country_code'] = StockSettings::COUNTRY;
+        }
+
+        return Validator::make($input, [
             'company' => 'required|string|min:2|max:160',
             'contact_name' => 'required|string|min:2|max:120',
             'phone' => 'required|phone',

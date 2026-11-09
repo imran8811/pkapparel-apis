@@ -39,7 +39,7 @@ final class OrderController extends AdminController
     ) {
     }
 
-    /** GET /v1/admin/orders?status=&kind=&q=&page= (status "late": production due date passed; kind: bulk or sample) */
+    /** GET /v1/admin/orders?status=&kind=&q=&page= (status "late": production due date passed; kind: bulk, sample or stock) */
     public function index(Request $request): Response
     {
         $this->authorize($request, 'sales', 'production');
@@ -63,6 +63,7 @@ final class OrderController extends AdminController
             self::paginationMeta($page, $perPage, $result['total']) + [
                 'counts' => $this->orders->countByStatus($kind) + ['late' => $this->orders->countLate($today)],
                 'samples' => array_sum($this->orders->countByStatus('sample')),
+                'stock' => array_sum($this->orders->countByStatus('stock')),
                 'payments_to_check' => $this->payments->countByStatus('submitted'),
             ],
         );
@@ -91,6 +92,9 @@ final class OrderController extends AdminController
     {
         $this->authorize($request, 'sales');
         $order = $this->order($request);
+        if ($order['kind'] === 'stock') {
+            throw HttpException::notFound('Stock orders have no proforma invoice.');
+        }
         $pdf = $this->pdfs->proforma($this->service->present($order, true), $this->service->bank());
 
         return Response::file($pdf, 'application/pdf', OrderPdfs::proformaFilename($order['order_no'], $order['kind']));
@@ -225,6 +229,16 @@ final class OrderController extends AdminController
         $data['gross_g'] = isset($data['gross_kg']) ? (int) round($data['gross_kg'] * 1000) : null;
         $order = $this->order($request);
         $this->workflow->ship($order, $this->staff($request), $data, $data['unpaid_reason'] ?? null);
+
+        return $this->fresh($order);
+    }
+
+    /** POST /v1/admin/orders/{id}/collected: the buyer collected a paid stock order. */
+    public function collected(Request $request): Response
+    {
+        $this->authorize($request, 'sales');
+        $order = $this->order($request);
+        $this->workflow->collected($order, $this->staff($request));
 
         return $this->fresh($order);
     }

@@ -151,6 +151,9 @@ final class OrderController
     public function proforma(Request $request): Response
     {
         $order = $this->order($request);
+        if ($order['kind'] === 'stock') {
+            throw HttpException::notFound('Stock orders have no proforma invoice: your order page shows what to pay.');
+        }
         if ($order['status'] === 'cancelled') {
             throw new HttpException(409, 'order_cancelled', 'This order was cancelled, so it has no proforma invoice.');
         }

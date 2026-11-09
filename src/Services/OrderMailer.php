@@ -8,7 +8,11 @@ use App\Core\Config;
 use App\Core\Format;
 use App\Models\Settings;
 
-/** Order emails to the buyer and to staff (the same address as inquiry notifications). */
+/**
+ * Order emails to the buyer and to staff (the same address as inquiry notifications).
+ * Stock orders get their own wording, amounts in rupees, the local payment details and links to the stock pages;
+ * their emails never name the country (the layout's stock variant).
+ */
 final class OrderMailer
 {
     public function __construct(
@@ -16,7 +20,78 @@ final class OrderMailer
         private readonly Config $config,
         private readonly Settings $settings,
         private readonly OrderPdfs $pdfs,
+        private readonly StockSettings $stock,
     ) {
+    }
+
+    /**
+     * Stock order placed: the buyer gets the amount, the payment details and the next steps; staff get a summary.
+     *
+     * @param array<string, mixed> $order buyer's view of the order
+     * @param array<string, mixed> $staffView staff view (with ids)
+     */
+    public function stockPlaced(array $order, array $staffView): void
+    {
+        $links = $this->links($order['order_no'], $staffView['id'], 'stock');
+        $total = self::money($order['amounts']['total_cents'], $order);
+        $due = self::money($order['amounts']['due_now_cents'], $order);
+        $cargo = $order['shipping_mode'] === 'cargo';
+
+        $this->toBuyer($order, "Your order {$order['order_no']}", [
+            'title' => 'Thank you for your order',
+            'intro' => sprintf('Please pay %s to confirm your order. Your sets are held for you once the payment is confirmed.', $due),
+            'facts' => [
+                'Order' => $order['order_no'],
+                'Jeans' => self::setsText($order),
+                'Total' => $total,
+                'Delivery' => $cargo ? sprintf('Cargo to %s', $order['address']['city'] ?? 'your city') : 'You collect it from us',
+                'Payment reference' => $order['order_no'],
+            ],
+            'paragraphs' => [
+                'Pay by bank transfer, JazzCash or Easypaisa, then tell us the transaction ID on the Confirm payment page.',
+                $cargo
+                    ? sprintf('Once the payment is confirmed, we book the cargo and send your order within %d days. You pay the cargo charges when it arrives.', $order['lead_time_days'])
+                    : sprintf('Once the payment is confirmed, your order is ready to collect within %d days.', $order['lead_time_days']),
+                sprintf('An order that is not paid within %d days is cancelled.', $this->stock->paymentDays()),
+            ],
+            'stockPayment' => $this->bankOrNull($order) ?? [],
+            'button' => ['label' => 'Confirm payment', 'url' => $links['confirm_payment']],
+        ]);
+
+        $this->toStaff($staffView, sprintf('[%s] New stock order from %s, %s', $order['order_no'], $order['customer']['company_name'], $total), [
+            'title' => 'New stock order',
+            'intro' => sprintf('%s placed a stock order. It waits for the payment; the sets are taken out of stock when you confirm it.', $order['customer']['company_name']),
+            'facts' => [
+                'Buyer' => trim($order['customer']['contact_name'] . ', ' . ($order['customer']['city'] ?? ''), ', '),
+                'Phone' => $order['customer']['phone'],
+                'Jeans' => self::setsText($order),
+                'Total' => $total,
+                'Delivery' => $cargo ? sprintf('Cargo to %s', $order['address']['city'] ?? '') : 'Collects it',
+                'Cargo company wanted' => $order['forwarder']['name'] ?? null,
+                'Notes' => $order['notes'],
+            ],
+            'lines' => true,
+        ], $links);
+    }
+
+    /** "12 sets (72 pcs)" */
+    private static function setsText(array $order): string
+    {
+        $sets = array_sum(array_map(static fn (array $line): int => (int) ($line['sets'] ?? 0), $order['lines'] ?? []));
+
+        return sprintf('%d %s (%d pcs)', $sets, $sets === 1 ? 'set' : 'sets', $order['total_pcs']);
+    }
+
+    /** An amount in the order's currency. */
+    private static function money(int $cents, array $order): string
+    {
+        return Format::money($cents, (string) ($order['currency'] ?? 'USD'));
+    }
+
+    /** @param array<string, mixed> $order */
+    private static function isStock(array $order): bool
+    {
+        return ($order['kind'] ?? 'bulk') === 'stock';
     }
 
     /**
@@ -28,7 +103,7 @@ final class OrderMailer
     public function placed(array $order, array $staffView): void
     {
         $pdf = $this->pdfs->proforma($order, $this->bankOrNull($order));
-        $data = $this->layoutData() + ['order' => $order, 'links' => $this->links($order['order_no'], $staffView['id'])];
+        $data = $this->layoutData($order) + ['order' => $order, 'links' => $this->links($order['order_no'], $staffView['id'], $order['kind'])];
 
         $this->mailer->send(
             (string) $order['customer']['email'],
@@ -55,7 +130,7 @@ final class OrderMailer
      */
     public function samplePlaced(array $order, array $staffView): void
     {
-        $links = $this->links($order['order_no'], $staffView['id']);
+        $links = $this->links($order['order_no'], $staffView['id'], $order['kind']);
         if ($order['status'] === 'awaiting_price') {
             $this->toBuyer($order, "We received your sample order {$order['order_no']}", [
                 'title' => 'Thank you for your sample order',
@@ -92,14 +167,26 @@ final class OrderMailer
      */
     public function paymentSubmitted(array $order, array $staffView, array $payment): void
     {
-        $data = $this->layoutData() + ['order' => $order, 'payment' => $payment, 'links' => $this->links($order['order_no'], $staffView['id'])];
+        $data = $this->layoutData($order) + ['order' => $order, 'payment' => $payment, 'links' => $this->links($order['order_no'], $staffView['id'], $order['kind'])];
+        $amount = self::money($payment['amount_cents'], $order);
 
         $this->mailer->send(
             $this->config->string('mail.admin_to'),
-            sprintf('[%s] Payment to check: %s, transaction %s', $order['order_no'], Format::money($payment['amount_cents']), $payment['transaction_id']),
-            $this->mailer->render('payment-submitted-admin', $data + ['preheader' => sprintf('%s reported a transfer of %s.', $order['customer']['company_name'], Format::money($payment['amount_cents']))]),
+            sprintf('[%s] Payment to check: %s, transaction %s', $order['order_no'], $amount, $payment['transaction_id']),
+            $this->mailer->render('payment-submitted-admin', $data + ['preheader' => sprintf('%s reported a transfer of %s.', $order['customer']['company_name'], $amount)]),
             (string) $order['customer']['email'],
         );
+
+        if (self::isStock($order)) {
+            $this->toBuyer($order, "We received your payment details for {$order['order_no']}", [
+                'title' => 'Thank you, we are checking your payment',
+                'intro' => sprintf('You reported a payment of %s (transaction %s, sent on %s).', $amount, $payment['transaction_id'], Format::date($payment['transferred_on'])),
+                'paragraphs' => ['We match it with our account and email you a receipt once it is confirmed. Your sets are then taken out of stock for you.'],
+                'button' => ['label' => 'View your order', 'url' => $data['links']['order']],
+            ]);
+
+            return;
+        }
 
         $this->mailer->send(
             (string) $order['customer']['email'],
@@ -112,7 +199,7 @@ final class OrderMailer
     /** @param array<string, mixed> $staffView */
     public function cancelled(array $staffView): void
     {
-        $data = $this->layoutData() + ['order' => $staffView, 'links' => $this->links($staffView['order_no'], $staffView['id'])];
+        $data = $this->layoutData($staffView) + ['order' => $staffView, 'links' => $this->links($staffView['order_no'], $staffView['id'], $staffView['kind'])];
 
         $this->mailer->send(
             $this->config->string('mail.admin_to'),
@@ -131,6 +218,11 @@ final class OrderMailer
     public function paymentConfirmed(array $order, array $payment, string $receiptPdf, bool $productionStarted): void
     {
         $outstanding = max(0, $order['amounts']['total_cents'] - $order['amounts']['paid_cents']);
+        if (self::isStock($order)) {
+            $this->stockPaymentConfirmed($order, $payment, $receiptPdf, $productionStarted, $outstanding);
+
+            return;
+        }
         $paragraphs = [];
         if ($productionStarted && self::isSample($order)) {
             $paragraphs[] = sprintf(
@@ -166,7 +258,41 @@ final class OrderMailer
                 'Still to pay' => Format::money($outstanding),
             ],
             'paragraphs' => $paragraphs,
-            'button' => ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0)['order']],
+            'button' => ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0, $order['kind'] ?? 'bulk')['order']],
+        ], [['name' => OrderPdfs::receiptFilename($payment['receipt_no']), 'content' => $receiptPdf, 'type' => 'application/pdf']]);
+    }
+
+    /**
+     * A stock order's payment was confirmed: its sets are taken out of stock for the buyer; the receipt is attached.
+     *
+     * @param array<string, mixed> $order buyer's view after the confirmation
+     * @param array<string, mixed> $payment the confirmed payment
+     */
+    private function stockPaymentConfirmed(array $order, array $payment, string $receiptPdf, bool $confirmed, int $outstanding): void
+    {
+        $paragraphs = [];
+        if ($confirmed && $order['shipping_mode'] === 'cargo') {
+            $paragraphs[] = sprintf('Your sets are taken out of stock for you. We are packing your order and will send it by cargo by %s, then email you the cargo company and the bilty number.', Format::date($order['production_due_on']));
+        } elseif ($confirmed) {
+            $pickup = $this->stock->pickup();
+            $paragraphs[] = sprintf('Your sets are taken out of stock for you. Your order will be ready to collect on %s%s.', Format::date($order['production_due_on']), $pickup['address'] !== null ? ' at ' . $pickup['address'] : '');
+            if ($pickup['hours'] !== null) {
+                $paragraphs[] = 'Collection times: ' . $pickup['hours'] . '.';
+            }
+        } elseif ($outstanding > 0) {
+            $paragraphs[] = 'This does not cover the full amount yet. Please send the rest, or contact us if you think this is a mistake.';
+        }
+
+        $this->toBuyer($order, sprintf('Payment received for %s (receipt %s)', $order['order_no'], $payment['receipt_no']), [
+            'title' => 'Thank you, we received your payment',
+            'intro' => sprintf('Your payment of %s is confirmed. Your receipt is attached.', self::money((int) $payment['received_cents'], $order)),
+            'facts' => [
+                'Receipt' => $payment['receipt_no'],
+                'Amount received' => self::money((int) $payment['received_cents'], $order),
+                'Still to pay' => $outstanding > 0 ? self::money($outstanding, $order) : null,
+            ],
+            'paragraphs' => $paragraphs,
+            'button' => ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0, 'stock')['order']],
         ], [['name' => OrderPdfs::receiptFilename($payment['receipt_no']), 'content' => $receiptPdf, 'type' => 'application/pdf']]);
     }
 
@@ -178,10 +304,10 @@ final class OrderMailer
     {
         $this->toBuyer($order, "We could not confirm your payment for {$order['order_no']}", [
             'title' => 'We could not confirm your payment',
-            'intro' => sprintf('You reported a transfer of %s (transaction %s), but we could not match it with our bank statement.', Format::money($payment['amount_cents']), $payment['transaction_id']),
+            'intro' => sprintf('You reported a %s of %s (transaction %s), but we could not match it with our %s.', self::isStock($order) ? 'payment' : 'transfer', self::money((int) $payment['amount_cents'], $order), $payment['transaction_id'], self::isStock($order) ? 'accounts' : 'bank statement'),
             'facts' => ['Reason' => (string) $payment['rejection_reason']],
             'paragraphs' => ['Please check the details with your bank and report the transfer again, or reply to this email and we will help.'],
-            'button' => $order['can_submit_payment'] ? ['label' => 'Report the payment again', 'url' => $this->links($order['order_no'], 0)['confirm_payment']] : null,
+            'button' => $order['can_submit_payment'] ? ['label' => 'Report the payment again', 'url' => $this->links($order['order_no'], 0, $order['kind'] ?? 'bulk')['confirm_payment']] : null,
         ]);
     }
 
@@ -207,7 +333,7 @@ final class OrderMailer
             'intro' => "Here is an update on the production of your order.",
             'facts' => ['Step' => $stageLabel, 'Due to be ready' => $due],
             'paragraphs' => $paragraphs,
-            'button' => ['label' => 'See the progress and photos', 'url' => $this->links($order['order_no'], 0)['order']],
+            'button' => ['label' => 'See the progress and photos', 'url' => $this->links($order['order_no'], 0, $order['kind'] ?? 'bulk')['order']],
         ]);
     }
 
@@ -233,8 +359,8 @@ final class OrderMailer
             'paragraphs' => $due > 0 ? ['After the transfer, tell us the transaction ID on the Confirm payment page.'] : [],
             'bank' => $due > 0 ? $this->bankOrNull($order) : false,
             'button' => $due > 0
-                ? ['label' => 'Confirm payment', 'url' => $this->links($order['order_no'], 0)['confirm_payment']]
-                : ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0)['order']],
+                ? ['label' => 'Confirm payment', 'url' => $this->links($order['order_no'], 0, $order['kind'] ?? 'bulk')['confirm_payment']]
+                : ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0, $order['kind'] ?? 'bulk')['order']],
         ], [['name' => OrderPdfs::invoiceFilename((string) $order['balance_invoice_no']), 'content' => $invoicePdf, 'type' => 'application/pdf']]);
     }
 
@@ -242,6 +368,25 @@ final class OrderMailer
     public function shipped(array $order): void
     {
         $shipment = $order['shipment'] ?? [];
+        if (self::isStock($order)) {
+            $this->toBuyer($order, "Your order {$order['order_no']} is on its way", [
+                'title' => 'Your order is on its way',
+                'intro' => sprintf('We sent your order by %s to %s.', $shipment['carrier'] ?? 'cargo', $order['address']['city'] ?? 'your city'),
+                'facts' => [
+                    'Sent on' => isset($shipment['shipped_on']) ? Format::date($shipment['shipped_on']) : null,
+                    'Cargo company' => $shipment['carrier'] ?? null,
+                    'Bilty / tracking number' => $shipment['tracking_no'] ?? null,
+                    'Cartons' => isset($shipment['cartons']) ? (string) $shipment['cartons'] : null,
+                ],
+                'paragraphs' => [
+                    'Pay the cargo charges to the cargo company when you collect your goods.',
+                    'If there is an issue with your order, tell us within 7 days of receiving it.',
+                ],
+                'button' => ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0, 'stock')['order']],
+            ]);
+
+            return;
+        }
         $sample = self::isSample($order);
         $this->toBuyer($order, $sample ? "Your samples for order {$order['order_no']} are on their way" : "Your order {$order['order_no']} has shipped", [
             'title' => $sample ? 'Your samples are on their way' : 'Your order is on its way',
@@ -255,13 +400,24 @@ final class OrderMailer
                 'Cartons' => isset($shipment['cartons']) ? (string) $shipment['cartons'] : null,
             ],
             'paragraphs' => !empty($shipment['tracking_url']) ? ['Track the shipment: ' . $shipment['tracking_url']] : [],
-            'button' => ['label' => 'Documents and tracking', 'url' => $this->links($order['order_no'], 0)['order']],
+            'button' => ['label' => 'Documents and tracking', 'url' => $this->links($order['order_no'], 0, $order['kind'] ?? 'bulk')['order']],
         ]);
     }
 
     /** @param array<string, mixed> $order buyer's view */
     public function delivered(array $order): void
     {
+        if (self::isStock($order)) {
+            $collected = $order['shipping_mode'] === 'pickup';
+            $this->toBuyer($order, $collected ? "Thank you for collecting order {$order['order_no']}" : "Your order {$order['order_no']} was delivered", [
+                'title' => $collected ? 'Thank you for your order' : 'Your order was delivered',
+                'intro' => $collected ? 'You collected your order. We hope the jeans sell well.' : 'Your order has arrived. We hope the jeans sell well.',
+                'paragraphs' => ['If there is an issue with your order, such as a fault, a wrong size or a wrong color, tell us within 7 days and send us photos.'],
+                'button' => ['label' => 'See what is in stock', 'url' => rtrim($this->config->string('web.url'), '/') . '/stock'],
+            ]);
+
+            return;
+        }
         if (self::isSample($order)) {
             $this->toBuyer($order, "Your samples for order {$order['order_no']} were delivered", [
                 'title' => 'Your samples were delivered',
@@ -274,7 +430,7 @@ final class OrderMailer
         $this->toBuyer($order, "Your order {$order['order_no']} was delivered", [
             'title' => 'Your order was delivered',
             'intro' => 'Thank you for ordering from PK Apparel. We hope the goods sell well. If anything is not right, reply to this email and we will sort it out.',
-            'button' => ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0)['order']],
+            'button' => ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0, $order['kind'] ?? 'bulk')['order']],
         ]);
     }
 
@@ -333,7 +489,7 @@ final class OrderMailer
             'title' => $title,
             'intro' => $message,
             'facts' => ['Reason' => $reason],
-            'button' => ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0)['order']],
+            'button' => ['label' => 'View your order', 'url' => $this->links($order['order_no'], 0, $order['kind'] ?? 'bulk')['order']],
         ]);
     }
 
@@ -344,6 +500,22 @@ final class OrderMailer
      */
     public function paymentReminder(array $order, int $number, string $cancelOn): void
     {
+        if (self::isStock($order)) {
+            $due = self::money($order['amounts']['due_now_cents'], $order);
+            $this->toBuyer($order, "Reminder: payment for order {$order['order_no']}", [
+                'title' => 'Your order is waiting for the payment',
+                'intro' => sprintf('We have not received the payment of %s for your order yet. Your sets are only held for you once it is confirmed, so they may sell out.', $due),
+                'facts' => ['Payment due' => $due, 'Payment reference' => $order['order_no']],
+                'paragraphs' => [
+                    sprintf('If we do not receive it by %s, the order is cancelled automatically.', Format::date($cancelOn)),
+                    'Already paid? Tell us the transaction ID on the Confirm payment page. Changed your mind? You can cancel the order on your order page.',
+                ],
+                'stockPayment' => $this->bankOrNull($order) ?? [],
+                'button' => ['label' => 'Confirm payment', 'url' => $this->links($order['order_no'], 0, 'stock')['confirm_payment']],
+            ]);
+
+            return;
+        }
         $sample = self::isSample($order);
         $due = Format::money($order['amounts']['due_now_cents']);
         $this->toBuyer($order, $sample ? "Reminder: payment for sample order {$order['order_no']}" : "Reminder: deposit for order {$order['order_no']}", [
@@ -357,13 +529,23 @@ final class OrderMailer
                 'Already paid? Tell us the transaction ID on the Confirm payment page. Changed your mind? You can cancel the order on your order page.',
             ])),
             'bank' => $this->bankOrNull($order),
-            'button' => ['label' => 'Confirm payment', 'url' => $this->links($order['order_no'], 0)['confirm_payment']],
+            'button' => ['label' => 'Confirm payment', 'url' => $this->links($order['order_no'], 0, $order['kind'] ?? 'bulk')['confirm_payment']],
         ]);
     }
 
     /** @param array<string, mixed> $order buyer's view */
     public function autoCancelled(array $order): void
     {
+        if (self::isStock($order)) {
+            $this->toBuyer($order, "Order {$order['order_no']} was cancelled", [
+                'title' => 'Your order was cancelled',
+                'intro' => sprintf('We did not receive the payment within %d days, so the order was cancelled automatically. Nothing else needs to be done.', $this->stock->paymentDays()),
+                'paragraphs' => ['If you still want these jeans, place a new order while they are in stock, or reply to this email and we will help.'],
+                'button' => ['label' => 'See what is in stock', 'url' => rtrim($this->config->string('web.url'), '/') . '/stock'],
+            ]);
+
+            return;
+        }
         $this->toBuyer($order, "Order {$order['order_no']} was cancelled", [
             'title' => 'Your order was cancelled',
             'intro' => sprintf('We did not receive the %s within 30 days, so the order was cancelled automatically. Nothing else needs to be done.', self::isSample($order) ? 'payment' : 'deposit'),
@@ -408,7 +590,7 @@ final class OrderMailer
             (string) $order['customer']['email'],
             "{$subject} | PK Apparel",
             // The content's own values (e.g. a bank block) come first; the rest are defaults.
-            $this->mailer->render('order-update', $content + ['order' => $order, 'bank' => false, 'preheader' => $content['intro']] + $this->layoutData()),
+            $this->mailer->render('order-update', $content + ['order' => $order, 'bank' => false, 'stockPayment' => false, 'preheader' => $content['intro']] + $this->layoutData($order)),
             $this->config->string('mail.admin_to'),
             $attachments,
         );
@@ -436,7 +618,7 @@ final class OrderMailer
                 sprintf('After the transfer, tell us the transaction ID on the Confirm payment page. Your samples are ready about %d days after the payment is confirmed, then go by express courier with tracking.', $order['lead_time_days']),
             ],
             'bank' => $this->bankOrNull($order),
-            'button' => ['label' => 'Confirm payment', 'url' => $this->links($order['order_no'], 0)['confirm_payment']],
+            'button' => ['label' => 'Confirm payment', 'url' => $this->links($order['order_no'], 0, $order['kind'] ?? 'bulk')['confirm_payment']],
         ], [['name' => OrderPdfs::proformaFilename($order['order_no'], 'sample'), 'content' => $pdf, 'type' => 'application/pdf']]);
     }
 
@@ -479,21 +661,48 @@ final class OrderMailer
         return is_array($order['bank'] ?? null) ? $order['bank'] : null;
     }
 
-    /** @return array<string, string> */
-    private function links(string $orderNo, int $orderId): array
+    /** @return array<string, string> The buyer's order pages (under /stock for stock orders) and the admin's. */
+    private function links(string $orderNo, int $orderId, string $kind = 'bulk'): array
     {
         $web = rtrim($this->config->string('web.url'), '/');
+        $account = $kind === 'stock' ? "{$web}/stock/account" : "{$web}/account";
 
         return [
-            'order' => "{$web}/account/orders/{$orderNo}",
-            'confirm_payment' => "{$web}/account/orders/{$orderNo}/confirm-payment",
+            'order' => "{$account}/orders/{$orderNo}",
+            'confirm_payment' => "{$account}/orders/{$orderNo}/confirm-payment",
             'admin' => "{$web}/admin/orders/{$orderId}",
         ];
     }
 
-    /** @return array<string, mixed> */
-    private function layoutData(): array
+    /**
+     * The layout's contacts, and its stock variant for stock orders (stock tagline, no country).
+     *
+     * @param array<string, mixed> $order
+     * @return array<string, mixed>
+     */
+    private function layoutData(array $order = []): array
     {
-        return ['contact' => $this->settings->get('contact', []), 'addresses' => $this->settings->get('addresses', [])];
+        return [
+            'contact' => $this->settings->get('contact', []),
+            'addresses' => $this->settings->get('addresses', []),
+            'stock' => self::isStock($order),
+        ];
+    }
+
+    /**
+     * A staff notification about a stock order (stock-staff template).
+     *
+     * @param array<string, mixed> $order staff view
+     * @param array<string, mixed> $content title, intro, facts, lines (bool: list the order's lines)
+     * @param array<string, string> $links
+     */
+    private function toStaff(array $order, string $subject, array $content, array $links): void
+    {
+        $this->mailer->send(
+            $this->config->string('mail.admin_to'),
+            $subject,
+            $this->mailer->render('stock-staff', $content + ['order' => $order, 'links' => $links, 'preheader' => $content['intro']] + $this->layoutData($order)),
+            (string) $order['customer']['email'],
+        );
     }
 }

@@ -20,7 +20,8 @@ use Throwable;
  * - Confirming gives the payment a receipt number (RCPT-2026-00001), adds what actually arrived to the
  *   order, emails the buyer a PDF receipt, and starts production once the deposit is covered (or when
  *   the admin says so, e.g. when bank fees made it a little short). A bulk order confirmed this way gets
- *   the buyer's paid samples deducted from its balance.
+ *   the buyer's paid samples deducted from its balance. A stock order confirmed this way has its sets taken out of
+ *   stock; when a color no longer has them, nothing is confirmed (StockOrders::deduct).
  * - Rejecting frees the transaction ID and tells the buyer why.
  */
 final class PaymentReview
@@ -31,6 +32,7 @@ final class PaymentReview
         private readonly OrderPayment $payments,
         private readonly OrderService $service,
         private readonly SampleOrders $samples,
+        private readonly StockOrders $stock,
         private readonly DocumentNumbers $numbers,
         private readonly OrderPdfs $pdfs,
         private readonly OrderMailer $mailer,
@@ -55,13 +57,14 @@ final class PaymentReview
             }
             $this->orders->addPaid($orderId, $receivedCents);
             $order = (array) $this->orders->find($orderId);
-            $sample = $order['kind'] === 'sample';
+            // Sample and stock orders are paid in full in one go.
+            $sample = $order['kind'] !== 'bulk';
             $this->orders->addEvent(
                 $orderId,
                 'payment_confirmed',
                 null,
                 null,
-                sprintf('%s of %s received (receipt %s)', $sample ? 'Payment' : (OrderPayment::KINDS[$payment['kind']] ?? 'Payment'), Format::money($receivedCents), $receiptNo),
+                sprintf('%s of %s received (receipt %s)', $sample ? 'Payment' : (OrderPayment::KINDS[$payment['kind']] ?? 'Payment'), Format::money($receivedCents, $order['currency']), $receiptNo),
                 'staff',
                 $staff['id'],
             );
@@ -72,13 +75,21 @@ final class PaymentReview
             if ($order['paid_cents'] >= $order['deposit_cents'] || $startAnyway) {
                 $due = Format::local()->modify('+' . $order['lead_time_days'] . ' days')->format('Y-m-d');
                 $short = $order['paid_cents'] < $order['deposit_cents'];
+                // The sets of a stock order leave the stock now; when one is short this throws and nothing is confirmed.
+                if ($order['kind'] === 'stock') {
+                    $this->stock->deduct($order, $staff['id']);
+                }
                 $this->orders->changeStatus(
                     $orderId,
                     $order['status'],
                     'confirmed',
                     'staff',
                     $staff['id'],
-                    $short ? ($sample ? 'Samples started before the full payment arrived' : 'Production started before the full deposit arrived') : null,
+                    $short ? match ($order['kind']) {
+                        'sample' => 'Samples started before the full payment arrived',
+                        'stock' => 'Confirmed before the full payment arrived',
+                        default => 'Production started before the full deposit arrived',
+                    } : null,
                     ['confirmed_at' => gmdate('Y-m-d H:i:s'), 'production_due_on' => $due],
                 );
                 $productionStarted = true;
@@ -120,7 +131,7 @@ final class PaymentReview
                 'payment_rejected',
                 null,
                 null,
-                sprintf('%s of %s not confirmed: %s', OrderPayment::KINDS[$payment['kind']] ?? 'Payment', Format::money($payment['amount_cents']), $reason),
+                sprintf('%s of %s not confirmed: %s', OrderPayment::KINDS[$payment['kind']] ?? 'Payment', Format::money($payment['amount_cents'], (string) $payment['currency']), $reason),
                 'staff',
                 $staff['id'],
             );

@@ -11,6 +11,7 @@ use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\Review;
 use App\Models\Settings;
+use App\Models\StockColor;
 use Throwable;
 
 /**
@@ -30,6 +31,9 @@ final class DailyJob
 
     public const CANCEL_DAYS = 30;
 
+    /** Unpaid stock orders get one reminder after this many days, and are cancelled after the stock settings' payment days. */
+    public const STOCK_REMINDER_DAYS = 2;
+
     private const DUE_SOON_DAYS = 3;
 
     public function __construct(
@@ -43,6 +47,8 @@ final class DailyJob
         private readonly Review $reviews,
         private readonly MissingPage $missingPages,
         private readonly Logger $logger,
+        private readonly StockSettings $stock,
+        private readonly StockColor $stockColors,
     ) {
     }
 
@@ -104,7 +110,8 @@ final class DailyJob
     }
 
     /**
-     * One unpaid order: a reminder after 3 and 7 days, cancelled after 30.
+     * One unpaid order: a reminder after 3 and 7 days, cancelled after 30. A stock order (its stock is not held):
+     * one reminder after 2 days, cancelled after the stock settings' payment days (7 by default).
      *
      * @param array<string, mixed> $order
      * @return string|null "reminded", "cancelled" or null (nothing due today)
@@ -114,12 +121,23 @@ final class DailyJob
         // Counted from when the order became payable (a sample order priced by staff, later than it was placed).
         $placed = Format::local($order['priced_at'] ?? $order['placed_at'])->setTime(0, 0);
         $days = (int) $placed->diff($today)->format('%r%a');
-        $cancelOn = $placed->modify('+' . self::CANCEL_DAYS . ' days')->format('Y-m-d');
+        $stock = $order['kind'] === 'stock';
+        $cancelDays = $stock ? $this->stock->paymentDays() : self::CANCEL_DAYS;
+        $cancelOn = $placed->modify('+' . $cancelDays . ' days')->format('Y-m-d');
 
-        if ($days >= self::CANCEL_DAYS) {
-            $this->cancel($order);
+        if ($days >= $cancelDays) {
+            $this->cancel($order, $cancelDays);
 
             return 'cancelled';
+        }
+        if ($stock) {
+            if ($days >= self::STOCK_REMINDER_DAYS && $order['reminders_sent'] < 1) {
+                $this->remind($order, 1, $cancelOn);
+
+                return 'reminded';
+            }
+
+            return null;
         }
         if ($days >= self::SECOND_REMINDER_DAYS && $order['reminders_sent'] < 2) {
             $this->remind($order, 2, $cancelOn);
@@ -145,9 +163,9 @@ final class DailyJob
     }
 
     /** @param array<string, mixed> $order */
-    private function cancel(array $order): void
+    private function cancel(array $order, int $days): void
     {
-        $reason = sprintf('The %s did not arrive within %d days', $order['kind'] === 'sample' ? 'payment' : 'deposit', self::CANCEL_DAYS);
+        $reason = sprintf('The %s did not arrive within %d days', $order['kind'] === 'bulk' ? 'deposit' : 'payment', $days);
         $changed = $this->orders->changeStatus($order['id'], 'awaiting_deposit', 'cancelled', 'system', null, $reason, [
             'cancelled_at' => gmdate('Y-m-d H:i:s'),
             'cancel_reason' => $reason,
@@ -178,8 +196,13 @@ final class DailyJob
             $payments[] = [
                 'order_no' => $order['order_no'] ?? '',
                 'company' => $order['customer']['company_name'] ?? '',
-                'kind' => ($order['kind'] ?? 'bulk') === 'sample' ? 'sample payment' : strtolower(OrderPayment::KINDS[$payment['kind']] ?? $payment['kind']),
+                'kind' => match ($order['kind'] ?? 'bulk') {
+                    'sample' => 'sample payment',
+                    'stock' => 'stock payment',
+                    default => strtolower(OrderPayment::KINDS[$payment['kind']] ?? $payment['kind']),
+                },
                 'amount_cents' => $payment['amount_cents'],
+                'currency' => (string) ($payment['currency'] ?? 'USD'),
             ];
         }
         $toPrice = array_map(static fn (array $order): array => [
@@ -205,6 +228,8 @@ final class DailyJob
         }
 
         $reviews = $this->reviews->counts()['pending'];
+        // Stock colors to restock: listed whenever the summary goes out, but never a reason to send it on their own.
+        $lowStock = $this->stockColors->low($this->stock->lowStockSets());
 
         if ($payments === [] && $toPrice === [] && $late === [] && $dueSoon === [] && $cancelled === [] && $reminded === 0 && $reviews === 0) {
             return false;
@@ -218,6 +243,7 @@ final class DailyJob
             'dueSoon' => $dueSoon,
             'cancelled' => $cancelled,
             'reminded' => $reminded,
+            'lowStock' => $lowStock,
         ]);
         $this->saveState(['summary_sent_on' => $today]);
 

@@ -14,11 +14,14 @@ use App\Models\Customer;
 use App\Models\CustomerToken;
 use App\Services\AccountMailer;
 use App\Services\CartService;
+use App\Services\StockCartService;
+use App\Services\StockSettings;
 use App\Services\TokenService;
 
 /**
  * Buyer signup, login, email confirmation and password reset.
  * The website keeps the session token in an HttpOnly cookie and sends it as a Bearer token.
+ * An account opened on the stock pages (area "stock") asks for the shop, city and phone; its emails link to the stock pages.
  */
 final class AuthController
 {
@@ -34,6 +37,7 @@ final class AuthController
         private readonly RateLimiter $limiter,
         private readonly AccountMailer $mailer,
         private readonly CartService $carts,
+        private readonly StockCartService $stockCarts,
     ) {
     }
 
@@ -47,18 +51,36 @@ final class AuthController
             throw new ValidationException(['email' => 'The account could not be created. Please try again.']);
         }
 
-        $data = Validator::make($input, [
-            'email' => 'required|email',
-            'password' => 'required|string|min:8|max:200',
-            'company_name' => 'required|string|min:2|max:160',
-            'contact_name' => 'required|string|min:2|max:120',
-            'business_type' => 'required|in:' . implode(',', array_keys(Customer::BUSINESS_TYPES)),
-            'country_code' => 'required|country',
-            'phone' => 'required|phone',
-            'website' => 'nullable|url|max:255',
-            'accept_terms' => 'required|bool',
-            'cart_token' => 'nullable|string|max:64',
-        ])->validate();
+        $area = ($input['area'] ?? null) === 'stock' ? 'stock' : 'wholesale';
+        if ($area === 'stock') {
+            // Shopkeepers and wholesalers buying from stock: their shop, city and phone (owner decision 2026-11-09).
+            $data = Validator::make($input, [
+                'email' => 'required|email',
+                'password' => 'required|string|min:8|max:200',
+                'company_name' => 'required|string|min:2|max:160',
+                'contact_name' => 'required|string|min:2|max:120',
+                'business_type' => 'required|in:retailer,wholesaler',
+                'city' => 'required|string|min:2|max:120',
+                'phone' => 'required|phone',
+                'accept_terms' => 'required|bool',
+                'cart_token' => 'nullable|string|max:64',
+            ])->validate();
+            $data['country_code'] = StockSettings::COUNTRY;
+            $data['website'] = null;
+        } else {
+            $data = Validator::make($input, [
+                'email' => 'required|email',
+                'password' => 'required|string|min:8|max:200',
+                'company_name' => 'required|string|min:2|max:160',
+                'contact_name' => 'required|string|min:2|max:120',
+                'business_type' => 'required|in:' . implode(',', array_keys(Customer::BUSINESS_TYPES)),
+                'country_code' => 'required|country',
+                'phone' => 'required|phone',
+                'website' => 'nullable|url|max:255',
+                'accept_terms' => 'required|bool',
+                'cart_token' => 'nullable|string|max:64',
+            ])->validate();
+        }
 
         if ($data['accept_terms'] !== true) {
             throw new ValidationException(['accept_terms' => 'Please accept the terms of sale and the privacy policy.']);
@@ -75,7 +97,7 @@ final class AuthController
             throw new ValidationException(['email' => 'An account with this email already exists. Log in, or reset your password if you forgot it.']);
         }
 
-        $id = $this->customers->create($data['email'], $data['password'], $data);
+        $id = $this->customers->create($data['email'], $data['password'], $data, $area);
         $customer = $this->customers->find($id);
         if ($customer === null) {
             throw new \RuntimeException('The new account could not be read back.');
@@ -171,10 +193,14 @@ final class AuthController
         return Response::noContent();
     }
 
-    /** POST /v1/account/forgot-password {email}: always the same answer, so it does not reveal who has an account. */
+    /**
+     * POST /v1/account/forgot-password {email, area}: always the same answer, so it does not reveal who has an account.
+     * area "stock" (the stock pages' form) makes the link lead to the stock pages.
+     */
     public function forgotPassword(Request $request): Response
     {
-        $email = (string) Validator::make($request->all(), ['email' => 'required|email'])->validate()['email'];
+        $input = Validator::make($request->all(), ['email' => 'required|email', 'area' => 'nullable|in:stock,wholesale'])->validate();
+        $email = (string) $input['email'];
 
         foreach ([['forgot-ip:' . $request->clientIp(), 10], ['forgot:' . Customer::normaliseEmail($email), 3]] as [$bucket, $max]) {
             if ($this->limiter->hit($bucket, $max, 3600)) {
@@ -185,7 +211,7 @@ final class AuthController
         $customer = $this->customers->findByEmail($email);
         if ($customer !== null && $customer['status'] === 'active') {
             $token = $this->links->issue((int) $customer['id'], CustomerToken::RESET_PASSWORD, (string) $customer['email'], AccountMailer::RESET_MINUTES * 60);
-            $this->mailer->passwordReset($customer, $token);
+            $this->mailer->passwordReset($customer, $token, $input['area'] ?? null);
         }
 
         return Response::noContent();
@@ -234,6 +260,8 @@ final class AuthController
     {
         $id = (int) $customer['id'];
         if ($cartToken !== null && $cartToken !== '') {
+            // The guest's stock lines first: merging the wholesale lines deletes the guest's cart.
+            $this->stockCarts->mergeGuest($cartToken, $id);
             $this->carts->mergeGuest($cartToken, $id);
         }
         $this->tokens->purgeExpired();
