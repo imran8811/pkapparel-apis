@@ -123,31 +123,6 @@ final class StockColor
         $this->db->execute('DELETE FROM stock_colors WHERE id = ?', [$id]);
     }
 
-    /**
-     * Shown colors (of shown styles) with this many sets or fewer, sold out first: what to restock.
-     *
-     * @return list<array{style_id: int, style_name: string, style_no: ?string, code: string, name: string, sets_in_stock: int}>
-     */
-    public function low(int $maxSets): array
-    {
-        $rows = $this->db->fetchAll(
-            "SELECT c.style_id, s.name AS style_name, s.style_no, c.code, c.name, c.sets_in_stock
-             FROM stock_colors c JOIN stock_styles s ON s.id = c.style_id
-             WHERE s.status = 'active' AND c.is_active = 1 AND c.sets_in_stock <= ?
-             ORDER BY c.sets_in_stock, s.name, c.sort_order, c.id",
-            [max(0, $maxSets)],
-        );
-
-        return array_map(static fn (array $row): array => [
-            'style_id' => (int) $row['style_id'],
-            'style_name' => (string) $row['style_name'],
-            'style_no' => $row['style_no'],
-            'code' => (string) $row['code'],
-            'name' => (string) $row['name'],
-            'sets_in_stock' => (int) $row['sets_in_stock'],
-        ], $rows);
-    }
-
     /** The color's sets in stock, with its row locked until the transaction ends; null when the color does not exist. */
     public function lockSets(int $id): ?int
     {

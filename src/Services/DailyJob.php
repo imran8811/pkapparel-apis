@@ -11,7 +11,6 @@ use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\Review;
 use App\Models\Settings;
-use App\Models\StockColor;
 use Throwable;
 
 /**
@@ -48,7 +47,6 @@ final class DailyJob
         private readonly MissingPage $missingPages,
         private readonly Logger $logger,
         private readonly StockSettings $stock,
-        private readonly StockColor $stockColors,
     ) {
     }
 
@@ -228,8 +226,6 @@ final class DailyJob
         }
 
         $reviews = $this->reviews->counts()['pending'];
-        // Stock colors to restock: listed whenever the summary goes out, but never a reason to send it on their own.
-        $lowStock = $this->stockColors->low($this->stock->lowStockSets());
 
         if ($payments === [] && $toPrice === [] && $late === [] && $dueSoon === [] && $cancelled === [] && $reminded === 0 && $reviews === 0) {
             return false;
@@ -243,7 +239,6 @@ final class DailyJob
             'dueSoon' => $dueSoon,
             'cancelled' => $cancelled,
             'reminded' => $reminded,
-            'lowStock' => $lowStock,
         ]);
         $this->saveState(['summary_sent_on' => $today]);
 

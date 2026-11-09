@@ -190,6 +190,11 @@ return static function (Router $router): void {
             $router->delete('/stock/colors/{id:\d+}', [Admin\StockColorController::class, 'destroy']);
             $router->post('/stock/colors/{id:\d+}/stock', [Admin\StockColorController::class, 'stock']);
             $router->get('/stock/movements', [Admin\StockStyleController::class, 'movements']);
+            $router->get('/stock/export', [Admin\StockToolsController::class, 'export']);
+            $router->post('/stock/import', [Admin\StockToolsController::class, 'import']);
+            $router->get('/stock/report', [Admin\StockToolsController::class, 'report']);
+            $router->get('/stock/from-wholesale', [Admin\StockToolsController::class, 'wholesale']);
+            $router->post('/stock/from-wholesale', [Admin\StockToolsController::class, 'copyFromWholesale']);
 
             $router->get('/size-charts', [Admin\SizeChartController::class, 'index']);
             $router->post('/size-charts', [Admin\SizeChartController::class, 'store']);

@@ -64,11 +64,8 @@ final class StockStyle
 
     // ----- Admin -----
 
-    /**
-     * @param int $lowStock a color with this many sets or fewer (but some) is running low
-     * @return array{items: list<array<string, mixed>>, total: int}
-     */
-    public function adminList(?string $status, ?string $search, int $page, int $perPage, int $lowStock = 0): array
+    /** @return array{items: list<array<string, mixed>>, total: int} */
+    public function adminList(?string $status, ?string $search, int $page, int $perPage): array
     {
         $where = ['1 = 1'];
         $params = [];
@@ -88,8 +85,6 @@ final class StockStyle
             "SELECT s.*,
                 (SELECT COUNT(*) FROM stock_colors c WHERE c.style_id = s.id) AS color_count,
                 (SELECT COALESCE(SUM(c.sets_in_stock), 0) FROM stock_colors c WHERE c.style_id = s.id AND c.is_active = 1) AS sets_in_stock,
-                (SELECT COUNT(*) FROM stock_colors c WHERE c.style_id = s.id AND c.is_active = 1 AND c.sets_in_stock > 0 AND c.sets_in_stock <= " . max(0, $lowStock) . ") AS low_count,
-                (SELECT COUNT(*) FROM stock_colors c WHERE c.style_id = s.id AND c.is_active = 1 AND c.sets_in_stock = 0) AS sold_out_count,
                 (SELECT i.path FROM stock_images i JOIN stock_colors c ON c.id = i.color_id
                  WHERE i.style_id = s.id ORDER BY c.sort_order, c.id, i.sort_order, i.id LIMIT 1) AS thumbnail
              FROM stock_styles s WHERE {$condition}
@@ -195,7 +190,7 @@ final class StockStyle
             is_array($sizes) ? array_values(array_filter($sizes, 'is_array')) : [],
         );
         $row['set_pieces'] = self::setPieces($row['set_sizes']);
-        foreach (['id', 'set_price_cents', 'sort_order', 'color_count', 'sets_in_stock', 'low_count', 'sold_out_count'] as $column) {
+        foreach (['id', 'set_price_cents', 'sort_order', 'color_count', 'sets_in_stock'] as $column) {
             if (isset($row[$column])) {
                 $row[$column] = (int) $row[$column];
             }

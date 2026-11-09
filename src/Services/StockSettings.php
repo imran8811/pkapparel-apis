@@ -17,7 +17,7 @@ final class StockSettings
 
     public const CURRENCY = 'PKR';
 
-    private const DEFAULTS = ['min_sets_per_order' => 1, 'dispatch_days' => 2, 'payment_days' => 7, 'low_stock_sets' => 3];
+    private const DEFAULTS = ['min_sets_per_order' => 1, 'dispatch_days' => 2, 'payment_days' => 7];
 
     /** Payment details: a bank account, JazzCash and Easypaisa (any of them may be left empty). */
     public const PAYMENT_FIELDS = [
@@ -45,12 +45,6 @@ final class StockSettings
     public function paymentDays(): int
     {
         return max(1, $this->int('payment_days'));
-    }
-
-    /** A color with this many sets or fewer is running low (0 turns the warning off; sold out is always shown). */
-    public function lowStockSets(): int
-    {
-        return max(0, $this->int('low_stock_sets'));
     }
 
     /** @return array{address: ?string, hours: ?string} Where buyers collect their orders. */

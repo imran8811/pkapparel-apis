@@ -112,7 +112,7 @@ final class StockOrderFlowTest extends BuyerApiTestCase
         self::assertSame(422, $tooMany->status());
         self::assertSame('Only 5 sets are in stock. You already have 2 in your cart.', $tooMany->decoded()['error']['fields']['sets']);
 
-        // A stock account: shop, city and phone; the guest's sets move into it.
+        // A stock account: shop, city and phone; the guest's sets move into it. Its profile keeps that shape.
         $signup = $this->send('POST', '/v1/account/signup', [
             'area' => 'stock', 'email' => self::BUYER, 'password' => self::PASSWORD, 'company_name' => 'Test Jeans Shop', 'contact_name' => 'Test Owner',
             'business_type' => 'retailer', 'city' => 'Multan', 'phone' => '+92 300 1234567', 'accept_terms' => true, 'cart_token' => $guestToken,
@@ -121,6 +121,11 @@ final class StockOrderFlowTest extends BuyerApiTestCase
         $token = $signup->decoded()['data']['token'];
         self::assertSame(['stock', 'Multan'], [$signup->decoded()['data']['customer']['channel'], $signup->decoded()['data']['customer']['city']]);
         self::assertSame(2, $this->send('GET', '/v1/stock/cart', null, $token)->decoded()['data']['total_sets'], 'The guest cart was merged');
+        $profile = $this->send('PUT', '/v1/account', [
+            'email' => self::BUYER, 'company_name' => 'Test Jeans Shop', 'contact_name' => 'Test Owner', 'business_type' => 'wholesaler', 'city' => 'Lahore', 'phone' => '+92 300 1234567',
+        ], $token);
+        self::assertSame(200, $profile->status(), (string) $profile->body());
+        self::assertSame(['Lahore', 'wholesaler', 'PK'], [$profile->decoded()['data']['city'], $profile->decoded()['data']['business_type'], $profile->decoded()['data']['country_code']]);
         // The confirmation link leads to the stock pages.
         $verified = $this->send('POST', '/v1/account/verify-email', ['token' => $this->lastMailedToken(self::BUYER, '/stock/verify-email')]);
         self::assertSame(200, $verified->status());

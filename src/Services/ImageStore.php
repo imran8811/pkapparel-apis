@@ -53,6 +53,51 @@ final class ImageStore
     }
 
     /**
+     * A copy of an uploaded image in another upload folder, e.g. a wholesale photo for a stock style, so that the two
+     * never share a file. The file is copied as it is: it was checked and re-encoded when it was uploaded.
+     *
+     * @return array{path: string, width: int, height: int, size: int}
+     */
+    public function copy(string $path, string $folder): array
+    {
+        if (!isset(self::FOLDERS[$folder])) {
+            throw new ValidationException(['folder' => 'Unknown upload folder.']);
+        }
+        if (!$this->exists($path)) {
+            throw new ValidationException(['path' => 'This photo was not found.']);
+        }
+
+        // "denim-front-3fa2c1.jpg" becomes "denim-front-<new suffix>.jpg".
+        $name = (string) preg_replace('/-[0-9a-f]{6}$/', '', pathinfo($path, PATHINFO_FILENAME));
+        $relative = sprintf(
+            'uploads/%s/%s/%s-%s.%s',
+            self::FOLDERS[$folder],
+            gmdate('Y/m'),
+            self::baseName($name),
+            bin2hex(random_bytes(3)),
+            strtolower(pathinfo($path, PATHINFO_EXTENSION)),
+        );
+        $target = $this->publicDir() . '/' . $relative;
+        if (!is_dir(dirname($target)) && !mkdir(dirname($target), 0775, true) && !is_dir(dirname($target))) {
+            throw new \RuntimeException('Could not create the upload folder ' . dirname($target));
+        }
+        if (!copy($this->publicDir() . '/' . $path, $target)) {
+            throw new \RuntimeException('Could not copy the image to ' . $target);
+        }
+        $info = @getimagesize($target);
+
+        return ['path' => $relative, 'width' => (int) ($info[0] ?? 0), 'height' => (int) ($info[1] ?? 0), 'size' => (int) filesize($target)];
+    }
+
+    /** Removes an uploaded image that nothing uses, e.g. a copy whose style could not be saved. */
+    public function discard(string $path): void
+    {
+        if ($this->exists($path)) {
+            @unlink($this->publicDir() . '/' . $path);
+        }
+    }
+
+    /**
      * Saves an image as a private file under storage/private (e.g. payment slips), which is never served directly.
      *
      * @return array{path: string, width: int, height: int, size: int} path is relative to storage/private, e.g. "payment-slips/2026/10/slip-9f3a….jpg"

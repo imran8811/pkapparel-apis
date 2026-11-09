@@ -48,6 +48,7 @@ final class StockApiTest extends IntegrationTestCase
     private function cleanUp(): void
     {
         $this->db->execute("DELETE FROM stock_styles WHERE slug LIKE 'test-stock%'");
+        $this->db->execute("DELETE FROM products WHERE slug LIKE 'test-stock%'");
         $this->db->execute("DELETE FROM redirects WHERE from_path LIKE '/stock/%/test-stock%'");
         foreach ([self::EDITOR, self::SALES] as $email) {
             $this->db->execute("DELETE t FROM auth_tokens t JOIN staff_users s ON s.id = t.user_id AND t.user_type = 'staff' WHERE s.email = ?", [$email]);
@@ -147,6 +148,102 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame(403, $this->admin('GET', '/v1/admin/stock/styles', null, self::SALES)->status(), 'Editors and admins manage stock');
     }
 
+    public function testCsvExportImportAndReport(): void
+    {
+        $style = $this->admin('POST', '/v1/admin/stock/styles', $this->styleInput())->decoded()['data'];
+        $this->admin('POST', "/v1/admin/stock/styles/{$style['id']}/colors", ['code' => 'TEST-ST-A', 'name' => 'Test indigo', 'sets_in_stock' => 10]);
+        $black = $this->admin('POST', "/v1/admin/stock/styles/{$style['id']}/colors", ['code' => 'TEST-ST-B', 'name' => 'Test black', 'sets_in_stock' => 4])->decoded()['data'];
+
+        $export = $this->admin('GET', '/v1/admin/stock/export');
+        self::assertSame(200, $export->status());
+        self::assertStringStartsWith("\xEF\xBB\xBFStyle no.,Style,For,Color code,Color,Sets in stock", $export->body());
+        self::assertStringContainsString('TEST-ST-A,"Test indigo",10,6,12500,No', $export->body(), 'A draft style is not shown');
+
+        // Excel in some languages saves with semicolons; problems are listed and nothing changes.
+        $bad = $this->admin('POST', '/v1/admin/stock/import', ['csv' => "Color code;Sets in stock\nTEST-ST-A;7\nTEST-NOPE;1\nTEST-ST-B;lots\n", 'apply' => true])->decoded()['data'];
+        self::assertFalse($bad['applied']);
+        self::assertSame([3, 4], array_column($bad['errors'], 'line'));
+        self::assertSame(10, $this->sets('TEST-ST-A'));
+
+        $preview = $this->admin('POST', '/v1/admin/stock/import', ['csv' => "Color code;Sets in stock\nTEST-ST-A;7\nTEST-ST-B;4\n"])->decoded()['data'];
+        self::assertSame([[2, 'TEST-ST-A', 10, 7], 1, false], [[$preview['changes'][0]['line'], $preview['changes'][0]['code'], $preview['changes'][0]['from'], $preview['changes'][0]['to']], $preview['unchanged'], $preview['applied']]);
+        self::assertSame(10, $this->sets('TEST-ST-A'), 'A preview changes nothing');
+        $applied = $this->admin('POST', '/v1/admin/stock/import', ['csv' => "Color code;Sets in stock\nTEST-ST-A;7\nTEST-ST-B;4\n", 'apply' => true])->decoded()['data'];
+        self::assertTrue($applied['applied']);
+        self::assertSame(7, $this->sets('TEST-ST-A'));
+        self::assertSame('Stock count imported', $this->admin('GET', '/v1/admin/stock/movements', ['style_id' => $style['id']])->decoded()['data'][0]['note']);
+
+        // Sold sets count in the report (less a cancelled order's), at today's set price.
+        $this->admin('POST', "/v1/admin/stock/colors/{$black['id']}/stock", ['reason' => 'sold', 'sets' => 2]);
+        $report = $this->admin('GET', '/v1/admin/stock/report', ['days' => 7], self::SALES)->decoded()['data'];
+        $row = array_values(array_filter($report['rows'], static fn (array $r): bool => $r['code'] === 'TEST-ST-B'))[0];
+        self::assertSame([2, 2, 2 * 1250000, 4], [$row['sets_in_stock'], $row['sold_sets'], $row['value_cents'], $row['received_sets']]);
+        self::assertSame(403, $this->admin('GET', '/v1/admin/stock/export', null, self::SALES)->status(), 'Sales staff read the report only');
+    }
+
+    public function testWholesaleJeansAreCopiedAsStockDrafts(): void
+    {
+        $product = $this->admin('POST', '/v1/admin/products', [
+            'name' => "Test stock men's straight jeans",
+            'slug' => 'test-stock-straight-jeans',
+            'segment' => 'men',
+            'product_type' => 'jeans-pant',
+            'specs' => ['fit' => 'Straight', 'rise' => 'Mid rise', 'stretch' => 'non-stretch'],
+            'description_html' => '<p>Five-pocket straight jeans in rigid denim.</p><p>Made to order in our factory, from 100 pieces per color.</p>',
+            'features' => ['Five-pocket styling'],
+            'sizes' => ['30', '32', '34', '36'],
+            'set_pcs_per_size' => 2,
+            'price_cents' => 650,
+        ]);
+        self::assertSame(201, $product->status(), (string) $product->body());
+        $productId = $product->decoded()['data']['id'];
+        $color = $this->admin('POST', "/v1/admin/products/{$productId}/colors", [
+            'code' => 'TEST-SW-1', 'name' => 'Rinse', 'images' => [['path' => $this->upload('products'), 'alt' => 'Test straight jeans in rinse, front']],
+        ]);
+        self::assertSame(201, $color->status(), (string) $color->body());
+
+        $row = $this->wholesaleRow($productId);
+        self::assertSame([null, null, 'men', 1, 1], [$row['stock_style_id'], $row['problem'], $row['segment'], $row['colors'], $row['photos']]);
+        self::assertSame(['30', '32', '34', '36'], array_column($row['set_sizes'], 'size'));
+        self::assertSame([2, 2, 2, 2], array_column($row['set_sizes'], 'pcs'), 'The wholesale set: 2 pieces per size');
+        self::assertSame(['Made to order in our factory, from 100 pieces per color.'], $row['left_out']);
+
+        $copied = $this->admin('POST', '/v1/admin/stock/from-wholesale', ['product_ids' => [$productId]])->decoded()['data']['copied'];
+        self::assertSame([[$productId, 1, 1]], array_map(static fn (array $c): array => [$c['product_id'], $c['colors'], $c['photos']], $copied));
+        $style = $this->admin('GET', "/v1/admin/stock/styles/{$copied[0]['stock_style_id']}")->decoded()['data'];
+        $photo = $style['colors'][0]['images'][0]['path'];
+        $this->files[] = $photo;
+
+        self::assertSame(['draft', 0, 'test-stock-straight-jeans'], [$style['status'], $style['set_price_cents'], $style['slug']], 'A draft without a price');
+        self::assertSame(['fit' => 'Straight', 'rise' => 'Mid rise', 'stretch' => 'non-stretch'], array_filter($style['specs']));
+        self::assertSame('<p>Five-pocket straight jeans in rigid denim.</p><ul><li>Five-pocket styling</li></ul>', $style['description_html']);
+        self::assertSame(['TEST-SW-1', 'Rinse', 0], [$style['colors'][0]['code'], $style['colors'][0]['name'], $style['colors'][0]['sets_in_stock']]);
+        self::assertStringStartsWith('uploads/stock/', $photo, 'The stock has its own copy of the photo');
+        self::assertTrue($this->app->container->get(ImageStore::class)->exists($photo));
+
+        // Copied once: copying again changes nothing, and the list links to the stock style.
+        self::assertSame([], $this->admin('POST', '/v1/admin/stock/from-wholesale', ['product_ids' => [$productId]])->decoded()['data']['copied']);
+        self::assertSame($style['id'], $this->wholesaleRow($productId)['stock_style_id']);
+        self::assertSame(422, $this->admin('POST', '/v1/admin/stock/from-wholesale', ['product_ids' => ['all']])->status());
+        self::assertSame(403, $this->admin('GET', '/v1/admin/stock/from-wholesale', null, self::SALES)->status());
+    }
+
+    private function sets(string $code): int
+    {
+        return (int) $this->db->fetchValue('SELECT sets_in_stock FROM stock_colors WHERE code = ?', [$code]);
+    }
+
+    /** @return array<string, mixed> The wholesale style's row in the "copy from wholesale" list. */
+    private function wholesaleRow(int $productId): array
+    {
+        foreach ($this->admin('GET', '/v1/admin/stock/from-wholesale')->decoded()['data'] as $row) {
+            if ($row['product_id'] === $productId) {
+                return $row;
+            }
+        }
+        self::fail("Wholesale style {$productId} is not listed");
+    }
+
     public function testRenamingAShownStyleRedirectsItsOldAddress(): void
     {
         $style = $this->admin('POST', '/v1/admin/stock/styles', $this->styleInput())->decoded()['data'];
@@ -174,14 +271,14 @@ final class StockApiTest extends IntegrationTestCase
         ];
     }
 
-    private function upload(): string
+    private function upload(string $folder = 'stock'): string
     {
         $file = tempnam(sys_get_temp_dir(), 'pk') . '.jpg';
         $image = imagecreatetruecolor(1200, 1600);
         imagefill($image, 0, 0, imagecolorallocate($image, 52, 84, 130));
         imagejpeg($image, $file);
         $this->files[] = $file;
-        $stored = $this->app->container->get(ImageStore::class)->store($file, 'test-stock-jeans.jpg', 'stock');
+        $stored = $this->app->container->get(ImageStore::class)->store($file, 'test-stock-jeans.jpg', $folder);
         $this->files[] = $stored['path'];
 
         return $stored['path'];

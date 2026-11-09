@@ -176,6 +176,16 @@ Ready men's and boys' jeans sold from stock on hand, separate from the made-to-o
   - Emails use the stock wording, rupees, links to `/stock/account/orders/{orderNo}`, the local payment details and the stock email layout (no country). The receipt is `templates/pdf/stock-receipt.php`.
   - The daily job reminds the buyer of an unpaid stock order after 2 days and cancels it after `stock.payment_days` (7).
 - **Settings** (Admin → Settings, admins): `stock` (`min_sets_per_order`, `dispatch_days`, `payment_days`, `pickup_address`, `pickup_hours`) and `stock_payment` (bank account, JazzCash and Easypaisa), both private.
+- **Stock in bulk** (`App\Services\StockCounts`):
+  - `GET /v1/admin/stock/export` is every stock color as CSV (UTF-8 with a byte-order mark, for Excel).
+  - `POST /v1/admin/stock/import` `{csv, apply}` reads counts from a CSV with the columns "Color code" and "Sets in stock" (comma, semicolon or tab). Without `apply` it is a preview. With `apply`, every changed color gets a `correction` movement, but only when no line has a problem.
+  - `GET /v1/admin/stock/report?days=30` gives each color's stock, its value at today's set price, and the sets sold (less cancelled orders), received and returned in the period. Sales staff may read the report; export and import are for editors and admins.
+- **Copy from the wholesale shop** (`App\Services\StockFromWholesale`, editors and admins):
+  - `GET /v1/admin/stock/from-wholesale` lists the wholesale jeans pants for men and boys (shown and drafts, not archived), each with what its copy would be: `stock_style_id` when a stock style already has its web address, or a `problem` (no waist sizes from 16 to 48, no colors).
+  - `POST /v1/admin/stock/from-wholesale {product_ids}` copies those not in the stock yet, each style whole or not at all.
+  - A copy is a stock draft with `set_price_cents` 0 and no sets in stock, so it stays hidden until staff enter its price and stock and show it. It takes the name, style no., web address, specs, the set (the wholesale waist sizes, each with the wholesale set's pieces per size), and the colors with their own copies of the photos (`ImageStore::copy`, under `uploads/stock`).
+  - Description paragraphs and features about the wholesale business (made to order, minimum order, labels, shipping, the country…) are left out and listed in `left_out`; the SEO texts are not copied. A color whose code another stock style uses is skipped.
+- **Stock accounts' profile:** `PUT /v1/account` for a stock account takes the shop, contact, business type, city, phone and email. The country stays as it is.
 
 ### Redirects and the launch checklist
 

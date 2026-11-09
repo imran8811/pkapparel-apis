@@ -260,8 +260,8 @@ final class SettingsController extends AdminController
     }
 
     /**
-     * Stock orders: the smallest order, days to send a paid order, days before an unpaid one is cancelled, when a color
-     * counts as running low, and where buyers collect their orders. Private: read through the stock pages and the admin.
+     * Stock orders: the smallest order, days to send a paid order, days before an unpaid one is cancelled, and where
+     * buyers collect their orders. Private: read through the stock pages and the admin.
      *
      * @param array<string, mixed> $input
      * @return array<string, mixed>
@@ -272,7 +272,6 @@ final class SettingsController extends AdminController
             'min_sets_per_order' => 'required|int|min:1|max:1000',
             'dispatch_days' => 'required|int|min:1|max:60',
             'payment_days' => 'required|int|min:1|max:60',
-            'low_stock_sets' => 'nullable|int|min:0|max:1000',
             'pickup_address' => 'nullable|string|max:300',
             'pickup_hours' => 'nullable|string|max:160',
         ])->validate();
@@ -281,7 +280,6 @@ final class SettingsController extends AdminController
             'min_sets_per_order' => $data['min_sets_per_order'],
             'dispatch_days' => $data['dispatch_days'],
             'payment_days' => $data['payment_days'],
-            'low_stock_sets' => $data['low_stock_sets'] ?? 3,
             'pickup_address' => ($data['pickup_address'] ?? '') === '' ? null : $data['pickup_address'],
             'pickup_hours' => ($data['pickup_hours'] ?? '') === '' ? null : $data['pickup_hours'],
         ];
