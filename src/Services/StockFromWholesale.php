@@ -184,8 +184,8 @@ final class StockFromWholesale
                 'specs' => self::specs($product, $color['spec_overrides']),
                 'description_html' => $shared['description'],
                 'set_sizes' => $shared['sizes'],
-                // No price yet: "Price on request" until staff enter the price per set.
-                'set_price_cents' => 0,
+                // No price yet: "Price on request" until staff enter the price per piece (the set's follows).
+                'piece_price_cents' => 0,
                 'seo_title' => null,
                 'seo_description' => null,
                 'status' => $show ? 'active' : 'draft',

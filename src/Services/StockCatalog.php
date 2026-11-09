@@ -60,6 +60,7 @@ final class StockCatalog
             ),
             'description_html' => (string) $style['description_html'],
             'set' => ['sizes' => $style['set_sizes'], 'pieces' => $style['set_pieces']],
+            'piece_price_cents' => $style['piece_price_cents'],
             'set_price_cents' => $style['set_price_cents'],
             'sets_in_stock' => array_sum(array_column($colors, 'sets_in_stock')),
             'colors' => array_map(static fn (array $color): array => [
@@ -112,6 +113,7 @@ final class StockCatalog
             'stretch' => $style['specs']['stretch'] ?? null,
             'sizes' => array_column($style['set_sizes'], 'size'),
             'set_pieces' => $style['set_pieces'],
+            'piece_price_cents' => $style['piece_price_cents'],
             'set_price_cents' => $style['set_price_cents'],
             'sets_in_stock' => array_sum(array_column($colors, 'sets_in_stock')),
             'is_featured' => $style['is_featured'],

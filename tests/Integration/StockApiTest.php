@@ -68,6 +68,7 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame('draft', $style['status'], 'New styles start as drafts');
         self::assertSame([['size' => '28', 'pcs' => 1], ['size' => '30', 'pcs' => 2], ['size' => '32', 'pcs' => 2], ['size' => '34', 'pcs' => 1]], $style['set_sizes'], 'Sizes are sorted');
         self::assertSame(6, $style['set_pieces']);
+        self::assertSame([200000, 1200000], [$style['piece_price_cents'], $style['set_price_cents']], 'A set costs its pieces times the price per piece');
         self::assertSame('stretch', $style['specs']['stretch']);
         self::assertNull($style['specs']['rise']);
 
@@ -90,7 +91,7 @@ final class StockApiTest extends IntegrationTestCase
         $cards = $this->send('GET', '/v1/stock/styles', ['segment' => 'men'])->decoded()['data'];
         $card = $this->card($cards, 'test-stock-slim-jeans');
         self::assertSame(['28', '30', '32', '34'], $card['sizes']);
-        self::assertSame(1250000, $card['set_price_cents']);
+        self::assertSame([200000, 1200000], [$card['piece_price_cents'], $card['set_price_cents']]);
         self::assertSame(12, $card['sets_in_stock']);
         self::assertStringStartsWith('uploads/stock/', $card['colors'][0]['image']['path']);
         self::assertSame([], array_filter(
@@ -143,11 +144,13 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame(422, $this->admin('POST', '/v1/admin/stock/styles', ['segment' => 'women'] + $this->styleInput())->status(), 'Men and boys only');
 
         $boys = $this->admin('POST', '/v1/admin/stock/styles', [
-            'name' => 'Test stock boys jeans', 'slug' => 'test-stock-boys-jeans', 'segment' => 'boys', 'set_price_cents' => 900000,
+            'name' => 'Test stock boys jeans', 'slug' => 'test-stock-boys-jeans', 'segment' => 'boys', 'piece_price_cents' => 150000,
             'set_sizes' => [['size' => '26', 'pcs' => 1], ['size' => '16', 'pcs' => 1], ['size' => '18', 'pcs' => 1]],
         ]);
         self::assertSame(201, $boys->status(), (string) $boys->body());
         self::assertSame(['16', '18', '26'], array_column($boys->decoded()['data']['set_sizes'], 'size'));
+        self::assertSame(450000, $boys->decoded()['data']['set_price_cents'], '3 pieces × Rs 1,500');
+        self::assertSame(422, $this->admin('POST', '/v1/admin/stock/styles', ['piece_price_cents' => 50] + $this->styleInput())->status(), 'A price per piece of at least Rs 1');
         self::assertSame(422, $this->admin('POST', '/v1/admin/stock/styles', ['slug' => 'test-stock-boys-jeans'] + $this->styleInput())->status(), 'Web addresses are unique');
 
         self::assertSame(403, $this->admin('GET', '/v1/admin/stock/styles', null, self::SALES)->status(), 'Editors and admins manage stock');
@@ -164,7 +167,7 @@ final class StockApiTest extends IntegrationTestCase
         $export = $this->admin('GET', '/v1/admin/stock/export');
         self::assertSame(200, $export->status());
         self::assertStringStartsWith("\xEF\xBB\xBFStyle no.,Style,For,Color code,Color,Sets in stock", $export->body());
-        self::assertStringContainsString('TEST-ST-A,"Test indigo",10,6,12500,No', $export->body(), 'A draft style is not shown');
+        self::assertStringContainsString('TEST-ST-A,"Test indigo",10,6,2000,12000,No', $export->body(), 'A draft style is not shown');
 
         // Excel in some languages saves with semicolons; problems are listed and nothing changes.
         $bad = $this->admin('POST', '/v1/admin/stock/import', ['csv' => "Color code;Sets in stock\nTEST-ST-A;7\nTEST-NOPE;1\nTEST-ST-B;lots\n", 'apply' => true])->decoded()['data'];
@@ -184,7 +187,7 @@ final class StockApiTest extends IntegrationTestCase
         $this->admin('POST', "/v1/admin/stock/colors/{$black['id']}/stock", ['reason' => 'sold', 'sets' => 2]);
         $report = $this->admin('GET', '/v1/admin/stock/report', ['days' => 7], self::SALES)->decoded()['data'];
         $row = array_values(array_filter($report['rows'], static fn (array $r): bool => $r['code'] === 'TEST-ST-B'))[0];
-        self::assertSame([2, 2, 2 * 1250000, 4], [$row['sets_in_stock'], $row['sold_sets'], $row['value_cents'], $row['received_sets']]);
+        self::assertSame([2, 2, 2 * 1200000, 4], [$row['sets_in_stock'], $row['sold_sets'], $row['value_cents'], $row['received_sets']]);
         self::assertSame(403, $this->admin('GET', '/v1/admin/stock/export', null, self::SALES)->status(), 'Sales staff read the report only');
     }
 
@@ -299,7 +302,7 @@ final class StockApiTest extends IntegrationTestCase
         $splitId = (int) $this->db->fetchValue('SELECT style_id FROM stock_colors WHERE id = ?', [$second]);
         $split = $this->admin('GET', "/v1/admin/stock/styles/{$splitId}")->decoded()['data'];
         self::assertSame(
-            ['test-stock-slim-jeans-black', 'Test stock slim jeans', 'draft', 1250000, ['TEST-ST-S2']],
+            ['test-stock-slim-jeans-black', 'Test stock slim jeans', 'draft', 1200000, ['TEST-ST-S2']],
             [$split['slug'], $split['name'], $split['status'], $split['set_price_cents'], array_column($split['colors'], 'code')],
             'A listing of its own, hidden until its color has a photo',
         );
@@ -347,7 +350,7 @@ final class StockApiTest extends IntegrationTestCase
             'segment' => 'men',
             'specs' => ['fit' => 'Slim', 'stretch' => 'stretch', 'wash' => 'Stone wash', 'neckline' => 'ignored'],
             'set_sizes' => [['size' => '32', 'pcs' => 2], ['size' => '28', 'pcs' => 1], ['size' => '34', 'pcs' => 1], ['size' => '30', 'pcs' => 2]],
-            'set_price_cents' => 1250000,
+            'piece_price_cents' => 200000,
         ];
     }
 

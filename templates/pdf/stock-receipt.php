@@ -104,7 +104,12 @@ $outstanding = max(0, $amounts['total_cents'] - $amounts['paid_cents']);
     <tr>
       <td><?= $e($line['style_name']) ?>, <?= $e($line['color_name']) ?> <span class="mono muted"><?= $e($line['color_code']) ?></span></td>
       <td class="num"><?= (int) ($line['sets'] ?? 0) ?></td>
-      <td class="num"><?= $e(Format::money((int) $line['unit_price_cents'], $currency)) ?></td>
+      <td class="num">
+        <?= $e(Format::money((int) $line['unit_price_cents'], $currency)) ?>
+        <?php if ((int) ($line['sets'] ?? 0) > 0 && (int) $line['qty'] > 0): $perSet = intdiv((int) $line['qty'], (int) $line['sets']); ?>
+          <br><span class="muted"><?= $perSet ?> pcs × <?= $e(Format::money((int) round((int) $line['unit_price_cents'] / max(1, $perSet)), $currency)) ?></span>
+        <?php endif; ?>
+      </td>
       <td class="num"><?= $e(Format::money((int) $line['line_cents'], $currency)) ?></td>
     </tr>
   <?php endforeach; ?>

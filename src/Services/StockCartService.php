@@ -97,6 +97,7 @@ final class StockCartService
                 'image' => $images[$color['id']] ?? null,
                 'style' => ['slug' => $style['slug'], 'name' => $style['name'], 'style_no' => $style['style_no'], 'segment' => $style['segment']],
                 'set' => ['sizes' => $style['set_sizes'], 'pieces' => $style['set_pieces']],
+                'piece_price_cents' => $style['piece_price_cents'],
                 'set_price_cents' => $style['set_price_cents'],
                 'sets' => $row['sets'],
                 'pieces' => $row['sets'] * $style['set_pieces'],

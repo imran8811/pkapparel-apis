@@ -35,6 +35,9 @@ $currency = (string) ($order['currency'] ?? 'PKR');
         </td>
         <td style="padding:8px 0 8px 12px;font-size:14px;text-align:right;white-space:nowrap;border-bottom:1px solid #f0ebe1;">
           <?= (int) ($line['sets'] ?? 0) ?> × <?= $e(Format::money((int) $line['unit_price_cents'], $currency)) ?>
+          <?php if ((int) ($line['sets'] ?? 0) > 0 && (int) $line['qty'] > 0): $perSet = intdiv((int) $line['qty'], (int) $line['sets']); ?>
+            <br><span style="color:#5c6170;font-size:12px;"><?= $perSet ?> pcs × <?= $e(Format::money((int) round((int) $line['unit_price_cents'] / max(1, $perSet)), $currency)) ?></span>
+          <?php endif; ?>
         </td>
         <td style="padding:8px 0 8px 12px;font-size:14px;text-align:right;white-space:nowrap;border-bottom:1px solid #f0ebe1;"><?= $e(Format::money((int) $line['line_cents'], $currency)) ?></td>
       </tr>

@@ -8,7 +8,8 @@ use App\Core\Database;
 
 /**
  * Stock styles: ready jeans sold from stock on hand, separate from the wholesale shop's made-to-order styles (Product).
- * Each style is sold by set only (one set per style: its sizes with a number of pieces per size), priced per set.
+ * Each style is sold by set only (one set per style: its sizes with a number of pieces per size). Its price is per
+ * piece (piece_price_cents); a set costs its pieces times that (set_price_cents, kept by encode()).
  * Colors and the sets each has in stock are in StockColor. The stock pages show active styles with an active color.
  */
 final class StockStyle
@@ -28,7 +29,7 @@ final class StockStyle
     public const MAX_PCS_PER_SIZE = 24;
 
     private const FILLABLE = [
-        'slug', 'name', 'style_no', 'segment', 'specs', 'description_html', 'set_sizes', 'set_price_cents',
+        'slug', 'name', 'style_no', 'segment', 'specs', 'description_html', 'set_sizes', 'piece_price_cents', 'set_price_cents',
         'seo_title', 'seo_description', 'status', 'is_featured', 'sort_order',
     ];
 
@@ -166,6 +167,10 @@ final class StockStyle
     private static function encode(array $data): array
     {
         $fields = array_intersect_key($data, array_flip(self::FILLABLE));
+        // Prices are per piece: a set costs its pieces times the piece price (kept for the cart, orders and reports).
+        if (array_key_exists('piece_price_cents', $fields) && is_array($data['set_sizes'] ?? null)) {
+            $fields['set_price_cents'] = (int) $fields['piece_price_cents'] * self::setPieces(array_values($data['set_sizes']));
+        }
         if (array_key_exists('specs', $fields)) {
             $fields['specs'] = json_encode((object) ($fields['specs'] ?? []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         }
@@ -197,6 +202,11 @@ final class StockStyle
             if (isset($row[$column])) {
                 $row[$column] = (int) $row[$column];
             }
+        }
+        $row['piece_price_cents'] = (int) ($row['piece_price_cents'] ?? 0);
+        // Saved before prices were per piece: its set price spread over the set's pieces.
+        if ($row['piece_price_cents'] === 0 && $row['set_price_cents'] > 0 && $row['set_pieces'] > 0) {
+            $row['piece_price_cents'] = (int) round($row['set_price_cents'] / $row['set_pieces']);
         }
         $row['is_featured'] = (bool) $row['is_featured'];
         foreach (['created_at', 'updated_at'] as $column) {

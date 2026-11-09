@@ -23,7 +23,7 @@ final class StockCounts
 
     private const MAX_ERRORS = 50;
 
-    private const HEADERS = ['Style no.', 'Style', 'For', 'Color code', 'Color', 'Sets in stock', 'Pieces per set', 'Price per set (Rs)', 'Shown'];
+    private const HEADERS = ['Style no.', 'Style', 'For', 'Color code', 'Color', 'Sets in stock', 'Pieces per set', 'Price per piece (Rs)', 'Price per set (Rs)', 'Shown'];
 
     public function __construct(
         private readonly Database $db,
@@ -36,7 +36,7 @@ final class StockCounts
     public function export(): string
     {
         $rows = $this->db->fetchAll(
-            'SELECT s.style_no, s.name AS style_name, s.segment, s.status, s.set_sizes, s.set_price_cents, c.code, c.name, c.is_active, c.sets_in_stock
+            'SELECT s.style_no, s.name AS style_name, s.segment, s.status, s.set_sizes, s.piece_price_cents, s.set_price_cents, c.code, c.name, c.is_active, c.sets_in_stock
              FROM stock_colors c JOIN stock_styles s ON s.id = c.style_id
              ORDER BY s.segment, s.sort_order, s.id, c.sort_order, c.id',
         );
@@ -54,6 +54,8 @@ final class StockCounts
                 (string) $row['name'],
                 (int) $row['sets_in_stock'],
                 $pieces,
+                // Per piece; a listing saved before prices were per piece spreads its set price over its pieces.
+                (int) round(((int) $row['piece_price_cents'] ?: ($pieces > 0 ? (int) $row['set_price_cents'] / $pieces : 0)) / 100),
                 (int) round((int) $row['set_price_cents'] / 100),
                 $row['status'] === 'active' && (int) $row['is_active'] === 1 ? 'Yes' : 'No',
             ], ',', '"', '');

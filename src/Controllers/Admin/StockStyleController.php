@@ -52,6 +52,7 @@ final class StockStyleController extends AdminController
             'name' => $s['name'],
             'style_no' => $s['style_no'],
             'segment' => $s['segment'],
+            'piece_price_cents' => $s['piece_price_cents'],
             'set_price_cents' => $s['set_price_cents'],
             'set_pieces' => $s['set_pieces'],
             'status' => $s['status'],
@@ -189,7 +190,8 @@ final class StockStyleController extends AdminController
             'specs' => 'nullable|array',
             'description_html' => 'nullable|string|max:200000',
             'set_sizes' => 'required|array|max:20',
-            'set_price_cents' => 'required|int|min:100|max:1000000000',
+            // Per piece (owner decision 2026-11-09): the set's price is its pieces times this, up to Rs 50,000 a piece.
+            'piece_price_cents' => 'required|int|min:100|max:5000000',
             'seo_title' => 'nullable|string|max:200',
             'seo_description' => 'nullable|string|max:320',
             'status' => 'nullable|in:' . implode(',', StockStyle::STATUSES),
