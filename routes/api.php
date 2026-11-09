@@ -15,6 +15,7 @@ use App\Controllers\RedirectController;
 use App\Controllers\ReviewController;
 use App\Controllers\ShopController;
 use App\Controllers\SiteController;
+use App\Controllers\StockController;
 use App\Core\Router;
 use App\Middleware\IdentifyBuyer;
 use App\Middleware\RequireClientKey;
@@ -50,6 +51,10 @@ return static function (Router $router): void {
         $router->get('/products/legacy/{article:[A-Za-z0-9-]+}', [ShopController::class, 'legacy']);
         $router->get('/products/{slug:[a-z0-9-]+}', [ShopController::class, 'product']);
         $router->get('/shop/categories', [ShopController::class, 'categories']);
+
+        // Stock: ready jeans sold by set
+        $router->get('/stock/styles', [StockController::class, 'styles']);
+        $router->get('/stock/styles/{slug:[a-z0-9-]+}', [StockController::class, 'style']);
 
         // Website forms (files are uploaded one at a time before the form is sent)
         $router->post('/inquiries', [InquiryController::class, 'store']);
@@ -163,6 +168,17 @@ return static function (Router $router): void {
             $router->post('/products/{id:\d+}/colors', [Admin\ProductColorController::class, 'store']);
             $router->put('/product-colors/{id:\d+}', [Admin\ProductColorController::class, 'update']);
             $router->delete('/product-colors/{id:\d+}', [Admin\ProductColorController::class, 'destroy']);
+
+            $router->get('/stock/styles', [Admin\StockStyleController::class, 'index']);
+            $router->post('/stock/styles', [Admin\StockStyleController::class, 'store']);
+            $router->get('/stock/styles/{id:\d+}', [Admin\StockStyleController::class, 'show']);
+            $router->put('/stock/styles/{id:\d+}', [Admin\StockStyleController::class, 'update']);
+            $router->delete('/stock/styles/{id:\d+}', [Admin\StockStyleController::class, 'destroy']);
+            $router->post('/stock/styles/{id:\d+}/colors', [Admin\StockColorController::class, 'store']);
+            $router->put('/stock/colors/{id:\d+}', [Admin\StockColorController::class, 'update']);
+            $router->delete('/stock/colors/{id:\d+}', [Admin\StockColorController::class, 'destroy']);
+            $router->post('/stock/colors/{id:\d+}/stock', [Admin\StockColorController::class, 'stock']);
+            $router->get('/stock/movements', [Admin\StockStyleController::class, 'movements']);
 
             $router->get('/size-charts', [Admin\SizeChartController::class, 'index']);
             $router->post('/size-charts', [Admin\SizeChartController::class, 'store']);

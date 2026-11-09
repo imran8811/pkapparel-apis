@@ -28,6 +28,7 @@ final class ImageStore
         'blog' => 'blog',
         'pages' => 'pages',
         'products' => 'products',
+        'stock' => 'stock',
         'factory' => 'site/factory',
         'certificates' => 'site/certificates',
     ];

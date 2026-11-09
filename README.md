@@ -59,6 +59,7 @@ They read the old site's files and database, set in `LEGACY_*` in `.env`, and ne
 - `faqs`, `testimonials`, `certifications`, `factory`
 - `posts`, `post:<slug>`, `pages`, `page:<slug>`
 - `products`, `product:<slug>`, `categories`
+- `stock`, `stock:<slug>`
 - `redirects`
 
 ## Staff accounts
@@ -153,6 +154,18 @@ php bin/create-staff.php --name="Your Name" --email=you@example.com --role=admin
   - **Specs per type:** e.g. rise and inseam for jeans, neckline and sleeve for T-shirts, collar and placket for polo shirts. Specs shared by all types stay in their own columns (`fit`, `fabric`, `composition`, `fabric_weight`, `stretch`, `wash`, `closure`); the others are kept in `products.attributes` (JSON). The admin sends them as `specs: {key: value}`; specs the type does not show are cleared. Colors may only change fabric details (`ProductTypes::COLOR_SPECS`).
   - `GET /v1/products/{slug}` returns `specs`, `spec_fields` (labels in display order, e.g. "Inseam", "Finish") and `size_system`. `GET /v1/admin/product-types` returns the definitions with suggested values, for the admin forms.
 - **Add-ons per product type:** `customization_options.product_types` (JSON; empty means every type). Checkout only offers, and accepts, add-ons that fit at least one style in the cart.
+
+### Stock
+
+Ready men's and boys' jeans sold from stock on hand, separate from the made-to-order wholesale shop (owner decisions 2026-11-09). The website shows them under `/stock`.
+- **Styles** (`stock_styles`, `App\Models\StockStyle`): segment `men` or `boys`, the jeans specs (keys and labels from `ProductTypes` for jeans pants), and **one set per style**: waist sizes 16–48 with the pieces of each (`set_sizes`), priced per set (`set_price_cents`, in paisa like every amount).
+- **Colors** (`stock_colors`, `stock_images`): code, swatch, photos and `sets_in_stock`. Stock is counted in sets.
+- **Stock changes** (`App\Services\StockLevels`): sets received, returned, sold or damaged, or a count correction. The color's row is locked while the change is made, stock never goes below zero, and every change is logged in `stock_movements` with its reason, note and staff member.
+- **Public:** `GET /v1/stock/styles?segment=men` (every style shown, in stock first) and `GET /v1/stock/styles/{slug}` (with the sets in stock per color and up to 4 related styles). A style is shown when it is active and has an active color.
+- **Admin (editors and admins):** `/v1/admin/stock/styles` (list, create, show, update, delete), `POST …/styles/{id}/colors` (with optional opening stock, logged as received), `PUT`/`DELETE /v1/admin/stock/colors/{id}`, `POST /v1/admin/stock/colors/{id}/stock` (`{reason, sets, note}`; for `correction`, `sets` is the number counted) and `GET /v1/admin/stock/movements?style_id=&color_id=`.
+  - A style needs an active color with a photo before it is shown. Renaming a shown style redirects its old address.
+- **Pages:** `stock-terms` and `stock-privacy` (Admin → Legal pages) are the stock pages' terms (with returns within 7 days) and privacy.
+- Orders are taken by WhatsApp or phone for now; staff record the sets sold as a stock change.
 
 ### Redirects and the launch checklist
 
