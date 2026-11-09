@@ -2,8 +2,10 @@
 -- Men's and boys' jeans only. Each style is sold by set only: one set per style, made of its sizes with a number of
 -- pieces per size, priced per set. Stock is counted in sets per color. Amounts are in paisa (rupees × 100), the same
 -- minor units as every other amount in this API.
+--
+-- Safe to import again: the tables are created only when they are missing, and the two pages only added once.
 
-CREATE TABLE stock_styles (
+CREATE TABLE IF NOT EXISTS stock_styles (
     id               INT UNSIGNED NOT NULL AUTO_INCREMENT,
     slug             VARCHAR(190) NOT NULL,
     name             VARCHAR(200) NOT NULL,
@@ -29,7 +31,7 @@ CREATE TABLE stock_styles (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- The colors of a stock style, each with the number of sets on hand. Only stock movements change sets_in_stock.
-CREATE TABLE stock_colors (
+CREATE TABLE IF NOT EXISTS stock_colors (
     id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
     style_id      INT UNSIGNED NOT NULL,
     code          VARCHAR(40)  NOT NULL,
@@ -47,7 +49,7 @@ CREATE TABLE stock_colors (
     CONSTRAINT stock_colors_style FOREIGN KEY (style_id) REFERENCES stock_styles (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE stock_images (
+CREATE TABLE IF NOT EXISTS stock_images (
     id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
     style_id   INT UNSIGNED NOT NULL,
     color_id   INT UNSIGNED NOT NULL,
@@ -66,7 +68,7 @@ CREATE TABLE stock_images (
 -- Every change to a color's stock, with who made it and why: received, correction, damaged, returned or sold.
 -- change_sets is positive for sets added, negative for sets taken out; sets_after is the stock after the change.
 -- order_id links sales and returns to their order (stock orders come later).
-CREATE TABLE stock_movements (
+CREATE TABLE IF NOT EXISTS stock_movements (
     id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     color_id    INT UNSIGNED    NOT NULL,
     change_sets INT             NOT NULL,
@@ -84,7 +86,8 @@ CREATE TABLE stock_movements (
     CONSTRAINT stock_movements_staff FOREIGN KEY (staff_id) REFERENCES staff_users (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- The terms and privacy pages of the stock pages, editable under Admin → Legal pages.
+-- The terms and privacy pages of the stock pages, editable under Admin → Legal pages (kept as they are when this file
+-- is imported again).
 INSERT INTO pages (slug, title, body_html, seo_description) VALUES
 (
     'stock-terms', 'Terms and returns',
@@ -95,4 +98,5 @@ INSERT INTO pages (slug, title, body_html, seo_description) VALUES
     'stock-privacy', 'Privacy',
     '<p>This page explains what we do with the details you give us when you contact us or order jeans from our stock.</p><h2>What we keep</h2><p>Your name, shop name, city, phone number and email address, and the details of your orders and payments.</p><h2>How we use it</h2><p>Only to answer you, to prepare and send your orders, and to keep the records the law requires. We never sell your details. We share them only with the cargo company that delivers your order.</p><h2>Visits to this website</h2><p>We count visits to this website with Google Analytics, without showing adverts.</p><h2>Your choices</h2><p>You can ask us at any time to show, correct or delete your details. Contact us by WhatsApp, phone or email.</p>',
     'What we do with the details you give us when you contact us or order jeans from our stock.'
-);
+)
+ON DUPLICATE KEY UPDATE slug = slug;

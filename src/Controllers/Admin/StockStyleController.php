@@ -58,6 +58,10 @@ final class StockStyleController extends AdminController
             'is_featured' => $s['is_featured'],
             'color_count' => $s['color_count'],
             'sets_in_stock' => $s['sets_in_stock'],
+            // The listing's color (one per listing).
+            'color_name' => $s['color_name'],
+            'color_code' => $s['color_code'],
+            'color_hex' => $s['color_hex'],
             'thumbnail' => $s['thumbnail'] ?? null,
             'updated_at' => $s['updated_at'],
         ], $result['items']);

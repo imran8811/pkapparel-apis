@@ -52,13 +52,13 @@ final class StockToolsController extends AdminController
         return Response::data($this->fromWholesale->preview());
     }
 
-    /** POST /v1/admin/stock/from-wholesale {product_ids}: copies those not in the stock yet, as stock drafts. */
+    /** POST /v1/admin/stock/from-wholesale {color_ids}: copies those wholesale colors not in the stock yet, a listing each. */
     public function copyFromWholesale(Request $request): Response
     {
         $this->authorize($request, 'editor');
-        $ids = Validator::make($request->all(), ['product_ids' => 'required|array|max:500'])->validate()['product_ids'];
+        $ids = Validator::make($request->all(), ['color_ids' => 'required|array|max:2000'])->validate()['color_ids'];
         if (!array_is_list($ids) || array_filter($ids, static fn (mixed $id): bool => !is_int($id) || $id < 1) !== []) {
-            throw new ValidationException(['product_ids' => 'Choose the styles to copy.']);
+            throw new ValidationException(['color_ids' => 'Choose the colors to copy.']);
         }
 
         return Response::data(['copied' => $this->fromWholesale->copy(array_values(array_unique($ids)))]);

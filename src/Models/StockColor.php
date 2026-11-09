@@ -67,6 +67,12 @@ final class StockColor
         return $row === null ? null : self::present($row);
     }
 
+    /** A stock style has one color at most: each jeans color is a listing of its own (owner decision 2026-11-09). */
+    public function styleHasColor(int $styleId): bool
+    {
+        return $this->db->fetchValue('SELECT id FROM stock_colors WHERE style_id = ? LIMIT 1', [$styleId]) !== null;
+    }
+
     public function codeExists(string $code, ?int $exceptId = null): bool
     {
         return $this->db->fetchValue('SELECT id FROM stock_colors WHERE code = ? AND id <> ?', [$code, $exceptId ?? 0]) !== null;

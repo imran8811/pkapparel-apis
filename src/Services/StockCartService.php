@@ -82,6 +82,9 @@ final class StockCartService
             $label = "{$style['name']}, {$color['name']}";
             if (!$available) {
                 $issues[] = "{$label} is sold out. Please remove it.";
+            } elseif ($style['set_price_cents'] <= 0) {
+                // Copied from the wholesale shop and not priced yet: it cannot be ordered online.
+                $issues[] = "{$label} has no price yet. Please remove it and ask us on WhatsApp.";
             } elseif ($short) {
                 $issues[] = sprintf('Only %d %s of %s %s in stock. Please lower the sets.', $color['sets_in_stock'], $color['sets_in_stock'] === 1 ? 'set' : 'sets', $label, $color['sets_in_stock'] === 1 ? 'is' : 'are');
             }
@@ -140,6 +143,9 @@ final class StockCartService
         if ($new > 0) {
             if ($style['status'] !== 'active' || !$color['is_active'] || $color['sets_in_stock'] === 0) {
                 throw new ValidationException(['sets' => 'This color is sold out.']);
+            }
+            if ($style['set_price_cents'] <= 0) {
+                throw new ValidationException(['sets' => 'This style has no price yet. Ask us for it on WhatsApp.']);
             }
             if ($new > $color['sets_in_stock']) {
                 $inCart = $current !== null && !$replace ? sprintf(' You already have %d in your cart.', $current) : '';

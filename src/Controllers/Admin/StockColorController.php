@@ -17,7 +17,10 @@ use App\Services\ImageStore;
 use App\Services\StockLevels;
 use App\Services\WebRevalidator;
 
-/** Colors of a stock style with their photos, and changes to their sets in stock (admin and editor). */
+/**
+ * The color of a stock style with its photos, and changes to its sets in stock (admin and editor). A style has one
+ * color: each jeans color is a listing of its own, with its own details (owner decision 2026-11-09).
+ */
 final class StockColorController extends AdminController
 {
     private const MAX_PHOTOS = 12;
@@ -36,6 +39,9 @@ final class StockColorController extends AdminController
     {
         $this->authorize($request, 'editor');
         $style = $this->styles->find($this->id($request)) ?? throw HttpException::notFound('This style does not exist.');
+        if ($this->colors->styleHasColor($style['id'])) {
+            throw new ValidationException(['code' => 'This listing has its color already. Each color is a listing of its own: add a new stock style for it.']);
+        }
         [$data, $photos] = $this->validated($request, $style, null);
         $opening = Validator::make($request->all(), ['sets_in_stock' => 'nullable|int|min:0|max:1000000'])->validate()['sets_in_stock'] ?? 0;
         $data['sort_order'] ??= $this->colors->nextSortOrder($style['id']);
@@ -120,7 +126,7 @@ final class StockColorController extends AdminController
                 return;
             }
         }
-        throw new ValidationException(['color' => 'This style is shown on the website and needs at least one active color with a photo. Hide the style first, or add another color.']);
+        throw new ValidationException(['color' => 'This listing is shown on the website and needs its color, shown and with a photo. Hide the listing first.']);
     }
 
     /** @param array<string, mixed> $style */

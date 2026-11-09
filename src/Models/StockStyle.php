@@ -85,6 +85,9 @@ final class StockStyle
             "SELECT s.*,
                 (SELECT COUNT(*) FROM stock_colors c WHERE c.style_id = s.id) AS color_count,
                 (SELECT COALESCE(SUM(c.sets_in_stock), 0) FROM stock_colors c WHERE c.style_id = s.id AND c.is_active = 1) AS sets_in_stock,
+                (SELECT c.name FROM stock_colors c WHERE c.style_id = s.id ORDER BY c.sort_order, c.id LIMIT 1) AS color_name,
+                (SELECT c.code FROM stock_colors c WHERE c.style_id = s.id ORDER BY c.sort_order, c.id LIMIT 1) AS color_code,
+                (SELECT c.hex FROM stock_colors c WHERE c.style_id = s.id ORDER BY c.sort_order, c.id LIMIT 1) AS color_hex,
                 (SELECT i.path FROM stock_images i JOIN stock_colors c ON c.id = i.color_id
                  WHERE i.style_id = s.id ORDER BY c.sort_order, c.id, i.sort_order, i.id LIMIT 1) AS thumbnail
              FROM stock_styles s WHERE {$condition}
