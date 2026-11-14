@@ -128,6 +128,20 @@ php bin/create-staff.php --name="Your Name" --email=you@example.com --role=admin
 - **Every step** is written to the order history (`order_events`) with who did it. The buyer sees only the steps meant for them.
 - **Times:** due dates and "late" use the Pakistan date (`Asia/Karachi`).
 
+### Invoices made by staff (`/v1/admin/invoices`)
+
+For buyers who order outside the website (e.g. samples agreed on WhatsApp). Sales staff and admins; `App\Services\Invoices`, tables `invoices` and `invoice_lines`.
+
+- **Three types**, numbered per year in `document_sequences`:
+  - `sample`: samples plus the courier, paid in full (`SI-2026-00001`);
+  - `proforma`: a production order, asking for a deposit (`deposit_percent`, from `commerce.deposit_percent`) with the balance before shipment (`PI-2026-00001`);
+  - `commercial`: the final invoice (`INV-2026-00001`, the same series as the orders' balance invoices).
+- **Contents:** the buyer and an optional consignee (copies, not links: `customer_id` only records the account it was filled from), dates, shipping method, Incoterm, lines (description, details, HS code, quantity, unit, price), courier or freight, discount, and money already received (deducted). Notes and terms are printed; staff notes are not.
+- **Amounts** (`Invoices::totals`): total = lines + shipping − discount. Due now is the total less what was received, or for a proforma its deposit share of the total less what was received.
+- **The PDF** (`templates/pdf/invoice.php`, `GET …/{id}/pdf`) prints the company details from Settings (legal name, address, NTN, phone, email, website from `WEB_URL`), the amount in words, the bank account (the private `bank` setting) and the invoice number as the payment reference. Paid and cancelled invoices say so.
+- **Steps:** `POST …/{id}/send {to, message?}` emails the PDF with the bank details (up to 5 addresses; replies go to `MAIL_ADMIN_TO`); `…/paid {paid_on, payment_reference?}` and `…/unpaid`; `…/cancel`; `…/duplicate {type?}` starts a new invoice from this one (e.g. the proforma once the samples are approved). `GET …/defaults` gives the new-invoice form its terms, dates and whether the bank details are filled in.
+- **Editing:** an invoice can be changed until it is paid or cancelled; its type and number stay. Cancelled invoices keep their number, so the numbering has no gaps.
+
 ### Quote requests, samples and reviews
 
 - **Files on quote requests:** the website uploads each file alone to `POST /v1/inquiry-files` (at most 4 MB, 30 per hour per visitor).
@@ -213,7 +227,7 @@ Ready men's and boys' jeans sold from stock on hand, separate from the made-to-o
 | `routes/api.php` | every route |
 | `config/app.php` | settings, read from `.env` |
 | `database/migrations/` | numbered SQL files |
-| `templates/` | email templates (`email/`) and the PDFs (`pdf/`: proforma and sample invoice, balance invoice, receipt) |
+| `templates/` | email templates (`email/`) and the PDFs (`pdf/`: proforma and sample invoice, balance invoice, receipt, and `invoice.php` for invoices made by staff) |
 | `bin/` | command-line scripts |
 | `tests/` | PHPUnit tests |
 | `storage/` | logs, cache and private files (`private/payment-slips`, `private/documents`, `private/production`, `private/inquiries`); must be writable and must not be web-accessible |
@@ -241,6 +255,7 @@ To make a secret: `php -r "echo bin2hex(random_bytes(32));"`
   - orders: order placed (proforma invoice attached), payment details received, payment confirmed (receipt attached) or rejected, production updates, on hold, resumed, new ready date, cancelled, ready to ship (balance invoice attached), shipped, delivered
   - sample orders: placed (sample invoice attached, or "we are pricing it"), priced (sample invoice attached), then the same payment and shipping emails in sample wording
   - from the daily job: payment reminders, the automatic cancellation and review requests
+  - invoices made by staff (Admin → Invoices): the invoice with its PDF attached and the bank details, sent when staff click "Send by email"
 - **Links in emails** point to `WEB_URL`, so set it to the live website address in production.
 
 **On the hosting (cPanel), send through its own mailbox, `info@pkapparel.com`:**

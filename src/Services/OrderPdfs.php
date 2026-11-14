@@ -10,8 +10,8 @@ use Dompdf\Dompdf;
 use Dompdf\Options;
 
 /**
- * The order's PDFs, made with dompdf from templates/pdf and the order's frozen data:
- * the proforma invoice (the order number is the PI number), the balance invoice and payment receipts.
+ * The PDFs, made with dompdf from templates/pdf: the order's proforma invoice (the order number is the PI number),
+ * balance invoice and payment receipts, made from the order's frozen data, and the invoices staff make in the admin.
  */
 final class OrderPdfs
 {
@@ -57,6 +57,26 @@ final class OrderPdfs
         return $this->render($template, ['order' => $order, 'payment' => $payment], 'Receipt ' . $payment['receipt_no']);
     }
 
+    /**
+     * An invoice made in Admin → Invoices (sample, proforma or final), with the company and bank details.
+     *
+     * @param array<string, mixed> $invoice presented invoice (Invoices::present)
+     * @param array<string, mixed>|null $bank bank account for the transfer
+     */
+    public function invoice(array $invoice, ?array $bank): string
+    {
+        // The footer says "Page 1 of 2": dompdf cannot count the pages in CSS, so a longer invoice is made again
+        // with its page count (most invoices fit on one page and are made once).
+        $title = $invoice['type_label'] . ' ' . $invoice['invoice_no'];
+        $pdf = $this->dompdf('invoice', ['invoice' => $invoice, 'bank' => $bank, 'pages' => 1], $title);
+        $pages = $pdf->getCanvas()->get_page_count();
+        if ($pages !== 1) {
+            $pdf = $this->dompdf('invoice', ['invoice' => $invoice, 'bank' => $bank, 'pages' => $pages], $title);
+        }
+
+        return (string) $pdf->output();
+    }
+
     /** "PI-PK-261016-482.pdf", or "Sample-invoice-PK-261016-482.pdf" for a sample order. */
     public static function proformaFilename(string $orderNo, string $kind = 'bulk'): string
     {
@@ -76,6 +96,12 @@ final class OrderPdfs
     /** @param array<string, mixed> $data */
     private function render(string $template, array $data, string $title): string
     {
+        return (string) $this->dompdf($template, $data, $title)->output();
+    }
+
+    /** @param array<string, mixed> $data */
+    private function dompdf(string $template, array $data, string $title): Dompdf
+    {
         $templates = rtrim($this->config->string('paths.templates'), '/\\') . '/pdf';
         $cache = rtrim($this->config->string('paths.storage'), '/\\') . '/cache/dompdf';
         if (!is_dir($cache)) {
@@ -86,6 +112,7 @@ final class OrderPdfs
             'company' => $this->settings->get('company', []),
             'contact' => $this->settings->get('contact', []),
             'addresses' => $this->settings->get('addresses', []),
+            'website' => preg_replace('#^https?://#', '', rtrim($this->config->string('web.url', 'https://www.pkapparel.com'), '/')),
             // The owner's original logo file (129×136 px is about 280 dpi at the printed size).
             'logo' => 'data:image/png;base64,' . base64_encode((string) file_get_contents($templates . '/logo.png')),
         ]);
@@ -104,7 +131,7 @@ final class OrderPdfs
         $pdf->addInfo('Author', 'PK Apparel');
         $pdf->render();
 
-        return (string) $pdf->output();
+        return $pdf;
     }
 
     /** @param array<string, mixed> $data */

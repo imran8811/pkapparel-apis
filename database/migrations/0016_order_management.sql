@@ -5,7 +5,7 @@
 CREATE TABLE document_sequences (
     name       VARCHAR(30)       NOT NULL,
     year       SMALLINT UNSIGNED NOT NULL,
-    last_value INT UNSIGNED      NOT NULL DEFAULT 0,
+    `last_value` INT UNSIGNED    NOT NULL DEFAULT 0,
     PRIMARY KEY (name, year)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

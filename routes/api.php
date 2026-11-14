@@ -235,6 +235,18 @@ return static function (Router $router): void {
             $router->get('/order-documents/{id:\d+}', [Admin\OrderDocumentController::class, 'file']);
             $router->delete('/order-documents/{id:\d+}', [Admin\OrderDocumentController::class, 'destroy']);
 
+            $router->get('/invoices', [Admin\InvoiceController::class, 'index']);
+            $router->post('/invoices', [Admin\InvoiceController::class, 'store']);
+            $router->get('/invoices/defaults', [Admin\InvoiceController::class, 'defaults']);
+            $router->get('/invoices/{id:\d+}', [Admin\InvoiceController::class, 'show']);
+            $router->put('/invoices/{id:\d+}', [Admin\InvoiceController::class, 'update']);
+            $router->get('/invoices/{id:\d+}/pdf', [Admin\InvoiceController::class, 'pdf']);
+            $router->post('/invoices/{id:\d+}/send', [Admin\InvoiceController::class, 'send']);
+            $router->post('/invoices/{id:\d+}/paid', [Admin\InvoiceController::class, 'paid']);
+            $router->post('/invoices/{id:\d+}/unpaid', [Admin\InvoiceController::class, 'unpaid']);
+            $router->post('/invoices/{id:\d+}/cancel', [Admin\InvoiceController::class, 'cancel']);
+            $router->post('/invoices/{id:\d+}/duplicate', [Admin\InvoiceController::class, 'duplicate']);
+
             $router->get('/payments', [Admin\PaymentController::class, 'index']);
             $router->post('/payments/{id:\d+}/confirm', [Admin\PaymentController::class, 'confirm']);
             $router->post('/payments/{id:\d+}/reject', [Admin\PaymentController::class, 'reject']);
