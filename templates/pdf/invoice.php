@@ -27,7 +27,7 @@ $units = array_values(array_unique(array_column($lines, 'unit')));
 $factory = is_array($addresses) && isset($addresses[0]) ? $addresses[0] : null;
 $sellerName = trim((string) ($company['legal_name'] ?? '')) !== '' ? $company['legal_name'] : ($company['name'] ?? 'PK Apparel');
 $brandName = $company['name'] ?? 'PK Apparel';
-$sellerAddress = $factory ? $factory['line'] . ', ' . $factory['city'] . ', ' . $factory['country'] : trim(($company['city'] ?? '') . ', ' . ($company['country'] ?? ''), ', ');
+$sellerAddress = $factory ? Format::companyAddress($factory) : trim(($company['city'] ?? '') . ', ' . ($company['country'] ?? ''), ', ');
 
 $dueLabel = $isProforma ? 'Valid until' : 'Due date';
 $dueValue = $invoice['due_date'] !== null ? Format::date($invoice['due_date']) : ($isProforma ? '—' : 'On receipt');

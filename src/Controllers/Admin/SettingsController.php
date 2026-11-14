@@ -133,7 +133,7 @@ final class SettingsController extends AdminController
 
     /**
      * @param array<string, mixed> $input
-     * @return list<array{label: string, line: string, city: string, country: string}>
+     * @return list<array{label: string, line: string, city: string, postal_code: ?string, country: string}>
      */
     private function addresses(array $input): array
     {
@@ -148,16 +148,25 @@ final class SettingsController extends AdminController
                 'label' => 'required|string|max:60',
                 'line' => 'required|string|max:200',
                 'city' => 'required|string|max:80',
+                // Printed after the city on invoices and receipts: "Lahore 54000".
+                'postal_code' => ['nullable', 'string', 'max:12', 'regex:/^[A-Za-z0-9][A-Za-z0-9 -]*$/'],
                 'country' => 'required|string|max:80',
             ]);
             if (!$validator->passes()) {
                 $fields = [];
                 foreach ($validator->errors() as $field => $message) {
-                    $fields["addresses.{$index}.{$field}"] = $message;
+                    $fields["addresses.{$index}.{$field}"] = $field === 'postal_code' ? 'Use letters, digits and spaces, e.g. 54000.' : $message;
                 }
                 throw new ValidationException($fields);
             }
-            $addresses[] = $validator->validate();
+            $data = $validator->validate();
+            $addresses[] = [
+                'label' => $data['label'],
+                'line' => $data['line'],
+                'city' => $data['city'],
+                'postal_code' => ($data['postal_code'] ?? '') === '' ? null : $data['postal_code'],
+                'country' => $data['country'],
+            ];
         }
 
         return $addresses;

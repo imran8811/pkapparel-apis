@@ -113,6 +113,29 @@ final class Format
         return (new DateTimeImmutable($value ?? 'now', new DateTimeZone('UTC')))->setTimezone($zone);
     }
 
+    /**
+     * One of the company's addresses (Settings → Addresses) on one line, with the post code after the city:
+     * "Sufiabad Stop, 18-KM Ferozepur Road, Lahore 54000, Pakistan". Stock documents leave the country out.
+     *
+     * @param array<string, mixed> $address
+     */
+    public static function companyAddress(array $address, bool $withCountry = true): string
+    {
+        $parts = [$address['line'] ?? null, self::cityAndPostcode($address), $withCountry ? ($address['country'] ?? null) : null];
+
+        return implode(', ', array_filter(array_map(static fn (mixed $part): string => trim((string) $part), $parts), static fn (string $part): bool => $part !== ''));
+    }
+
+    /**
+     * "Lahore 54000" (just the city while no post code is set).
+     *
+     * @param array<string, mixed> $address
+     */
+    public static function cityAndPostcode(array $address): string
+    {
+        return trim(trim((string) ($address['city'] ?? '')) . ' ' . trim((string) ($address['postal_code'] ?? '')));
+    }
+
     /** "US" → "United States" (falls back to the code when the intl extension is missing). */
     public static function country(?string $code): string
     {

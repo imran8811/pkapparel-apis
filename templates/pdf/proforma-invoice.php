@@ -59,7 +59,7 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
 </head>
 <body>
 <div class="footer">
-  <?= $e($sellerName) ?><?= $factory ? ' · ' . $e($factory['line'] . ', ' . $factory['city'] . ', ' . $factory['country']) : '' ?>
+  <?= $e($sellerName) ?><?= $factory ? ' · ' . $e(Format::companyAddress($factory)) : '' ?>
   <?= !empty($contact['email']) ? ' · ' . $e($contact['email']) : '' ?><?= !empty($contact['phone']) ? ' · ' . $e($contact['phone']) : '' ?>
 </div>
 
@@ -96,7 +96,7 @@ $addressLines = static fn (array $a): array => array_values(array_filter([
     <td style="width: 33%; padding-right: 10px;">
       <h2>Seller</h2>
       <strong><?= $e($sellerName) ?></strong><br>
-      <?php if ($factory): ?><?= $e($factory['line']) ?><br><?= $e($factory['city'] . ', ' . $factory['country']) ?><br><?php endif; ?>
+      <?php if ($factory): ?><?= $e($factory['line']) ?><br><?= $e(Format::cityAndPostcode($factory) . ', ' . $factory['country']) ?><br><?php endif; ?>
       <?php if (!empty($company['ntn'])): ?>NTN <?= $e($company['ntn']) ?><br><?php endif; ?>
       <?= $e($contact['email'] ?? '') ?><br><?= $e($contact['phone'] ?? '') ?>
     </td>

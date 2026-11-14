@@ -36,7 +36,7 @@ $outstanding = max(0, $amounts['total_cents'] - $amounts['paid_cents']);
 </head>
 <body>
 <div class="footer">
-  <?= $e($sellerName) ?><?= $factory ? ' · ' . $e($factory['line'] . ', ' . $factory['city'] . ', ' . $factory['country']) : '' ?>
+  <?= $e($sellerName) ?><?= $factory ? ' · ' . $e(Format::companyAddress($factory)) : '' ?>
   <?= !empty($contact['email']) ? ' · ' . $e($contact['email']) : '' ?><?= !empty($contact['phone']) ? ' · ' . $e($contact['phone']) : '' ?>
 </div>
 
@@ -68,7 +68,7 @@ $outstanding = max(0, $amounts['total_cents'] - $amounts['paid_cents']);
     <td>
       <h2>Received by</h2>
       <strong><?= $e($sellerName) ?></strong><br>
-      <?php if ($factory): ?><?= $e($factory['line']) ?><br><?= $e($factory['city'] . ', ' . $factory['country']) ?><br><?php endif; ?>
+      <?php if ($factory): ?><?= $e($factory['line']) ?><br><?= $e(Format::cityAndPostcode($factory) . ', ' . $factory['country']) ?><br><?php endif; ?>
       <?php if (!empty($company['ntn'])): ?>NTN <?= $e($company['ntn']) ?><?php endif; ?>
     </td>
   </tr>

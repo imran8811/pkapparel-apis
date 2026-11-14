@@ -27,6 +27,9 @@ final class AdminApiTest extends IntegrationTestCase
     /** @var array<string, mixed> */
     private array $savedFacts = [];
 
+    /** @var list<array<string, mixed>> */
+    private array $savedAddresses = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -37,12 +40,33 @@ final class AdminApiTest extends IntegrationTestCase
             $staff->create(ucfirst($role) . ' Tester', $email, self::PASSWORD, $role);
         }
         $this->savedFacts = $this->app->container->get(Settings::class)->get('factory_facts', []);
+        $this->savedAddresses = (array) $this->app->container->get(Settings::class)->get('addresses', []);
     }
 
     protected function tearDown(): void
     {
         $this->app->container->get(Settings::class)->set('factory_facts', $this->savedFacts, true);
+        $this->app->container->get(Settings::class)->set('addresses', $this->savedAddresses, true);
         $this->cleanUp();
+    }
+
+    public function testAddressesKeepTheirPostCode(): void
+    {
+        $token = $this->login('admin');
+        $saved = $this->send('PUT', '/v1/admin/settings/addresses', ['addresses' => [
+            ['label' => 'Factory', 'line' => 'Sufiabad Stop, 18-KM Ferozepur Road', 'city' => 'Lahore', 'postal_code' => '54000', 'country' => 'Pakistan'],
+            ['label' => 'Office', 'line' => '21-KM Ferozepur Road', 'city' => 'Lahore', 'postal_code' => '', 'country' => 'Pakistan'],
+        ]], $token);
+        self::assertSame(200, $saved->status(), $saved->body());
+        self::assertSame(['54000', null], array_column($saved->decoded()['data'], 'postal_code'));
+        self::assertSame('Sufiabad Stop, 18-KM Ferozepur Road, Lahore 54000, Pakistan', \App\Core\Format::companyAddress($saved->decoded()['data'][0]));
+        self::assertSame('21-KM Ferozepur Road, Lahore', \App\Core\Format::companyAddress($saved->decoded()['data'][1], false));
+
+        $bad = $this->send('PUT', '/v1/admin/settings/addresses', ['addresses' => [
+            ['label' => 'Factory', 'line' => 'Road', 'city' => 'Lahore', 'postal_code' => '<54000>', 'country' => 'Pakistan'],
+        ]], $token);
+        self::assertSame(422, $bad->status());
+        self::assertArrayHasKey('addresses.0.postal_code', $bad->decoded()['error']['fields']);
     }
 
     private function cleanUp(): void

@@ -36,7 +36,7 @@ $stock = (bool) ($stock ?? false);
         <tr>
           <td style="padding:18px 28px;background:#fbfaf7;border-top:1px dashed #e6e0d4;font-size:12px;line-height:1.6;color:#5c6170;">
             <?php if ($factory !== null): ?>
-              PK Apparel · <?= $e($factory['line'] . ', ' . $factory['city'] . ($stock ? '' : ', ' . $factory['country'])) ?><br>
+              PK Apparel · <?= $e(\App\Core\Format::companyAddress($factory, !$stock)) ?><br>
             <?php endif; ?>
             <?php if (!empty($contact['phone'])): ?>WhatsApp / phone: <?= $e($contact['phone']) ?> · <?php endif; ?>
             <a href="mailto:<?= $e($contact['email'] ?? 'info@pkapparel.com') ?>" style="color:#0048ac;"><?= $e($contact['email'] ?? 'info@pkapparel.com') ?></a>
