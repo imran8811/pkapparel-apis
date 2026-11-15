@@ -15,6 +15,15 @@ final class ProductColor
     /** Fabric details a color may change, e.g. the olive cargo is stretch while the others are not (only those its type shows). */
     public const SPEC_KEYS = ProductTypes::COLOR_SPECS;
 
+    public const MAX_PHOTOS = 12;
+
+    /** What every color needs (the color form and a new style's first color). */
+    public const RULES = [
+        'code' => ['required', 'string', 'max:40', 'regex:/^[A-Za-z0-9][A-Za-z0-9-]*$/'],
+        'name' => 'required|string|max:80',
+        'hex' => ['nullable', 'regex:/^#[0-9a-fA-F]{6}$/'],
+    ];
+
     public function __construct(private readonly Database $db)
     {
     }

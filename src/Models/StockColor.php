@@ -15,6 +15,15 @@ final class StockColor
     /** Color codes: letters, digits and dashes, unique among stock colors (shown to buyers). */
     public const CODE_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9-]*$/';
 
+    public const MAX_PHOTOS = 12;
+
+    /** What every color needs (the color form and a new listing's color). */
+    public const RULES = [
+        'code' => ['required', 'string', 'max:40', 'regex:' . self::CODE_PATTERN],
+        'name' => 'required|string|max:80',
+        'hex' => ['nullable', 'regex:/^#[0-9a-fA-F]{6}$/'],
+    ];
+
     public function __construct(private readonly Database $db)
     {
     }

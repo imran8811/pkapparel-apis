@@ -6,11 +6,35 @@ namespace App\Controllers\Admin;
 
 use App\Core\HttpException;
 use App\Core\Request;
+use App\Core\ValidationException;
 use App\Core\Validator;
 
 /** Shared helpers for admin controllers (routes behind RequireStaff). */
 abstract class AdminController
 {
+    /**
+     * Checks an object inside the request, e.g. "color": {…}, with its problems on "color.code" etc.
+     *
+     * @param array<string, mixed> $rules
+     * @return array<string, mixed>
+     */
+    protected static function nested(mixed $input, array $rules, string $field): array
+    {
+        if (!is_array($input)) {
+            throw new ValidationException([$field => 'Must be a set of fields.']);
+        }
+        $validator = Validator::make($input, $rules);
+        if (!$validator->passes()) {
+            $fields = [];
+            foreach ($validator->errors() as $name => $message) {
+                $fields["{$field}.{$name}"] = $message;
+            }
+            throw new ValidationException($fields);
+        }
+
+        return $validator->validate();
+    }
+
     /** @return array{id: int, name: string, email: string, role: string} */
     protected function staff(Request $request): array
     {

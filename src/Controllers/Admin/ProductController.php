@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers\Admin;
 
+use App\Core\Database;
 use App\Core\HtmlSanitizer;
 use App\Core\HttpException;
 use App\Core\Request;
@@ -15,6 +16,7 @@ use App\Models\Product;
 use App\Models\ProductColor;
 use App\Models\ProductTypes;
 use App\Models\SizeChart;
+use App\Services\ImageStore;
 use App\Services\Redirects;
 use App\Services\WebRevalidator;
 
@@ -28,6 +30,8 @@ final class ProductController extends AdminController
         private readonly HtmlSanitizer $sanitizer,
         private readonly WebRevalidator $revalidator,
         private readonly Redirects $redirects,
+        private readonly ImageStore $images,
+        private readonly Database $db,
     ) {
     }
 
@@ -76,17 +80,28 @@ final class ProductController extends AdminController
         return Response::data($this->present($this->id($request)));
     }
 
-    /** POST /v1/admin/products: new styles start as drafts until they have a color with photos. */
+    /**
+     * POST /v1/admin/products: new styles start as drafts until they have a color with photos. The first color may come
+     * along as "color": {code, name, hex, images}; it is checked first, so the style is saved with it or not at all.
+     */
     public function store(Request $request): Response
     {
         $this->authorize($request, 'editor');
         $data = $this->validated($request, null);
+        $color = $this->firstColor($request->all()['color'] ?? null);
         $data['status'] = 'draft';
         $tiers = $data['tiers'];
         unset($data['tiers']);
 
-        $id = $this->products->create($data);
-        $this->products->replaceTiers($id, $tiers);
+        $id = $this->db->transaction(function () use ($data, $tiers, $color): int {
+            $id = $this->products->create($data);
+            $this->products->replaceTiers($id, $tiers);
+            if ($color !== null) {
+                $this->colors->create($id, $color['data'], $color['photos']);
+            }
+
+            return $id;
+        });
         $this->revalidator->revalidate(['products']);
 
         return Response::data($this->present($id), [], 201);
@@ -129,6 +144,38 @@ final class ProductController extends AdminController
         $this->revalidator->revalidate(['products', 'product:' . $product['slug']]);
 
         return Response::noContent();
+    }
+
+    /**
+     * A new style's first color, with its photos (more colors, their own prices and fabric details are added on the
+     * style's page).
+     *
+     * @return array{data: array<string, mixed>, photos: list<array{path: string, alt: string, width: int, height: int}>}|null
+     */
+    private function firstColor(mixed $input): ?array
+    {
+        if ($input === null) {
+            return null;
+        }
+        $data = self::nested($input, ProductColor::RULES, 'color');
+        if ($this->colors->codeExists($data['code'])) {
+            throw new ValidationException(['color.code' => 'Another color already uses this code.']);
+        }
+        $photos = $this->images->photos($input['images'] ?? [], ProductColor::MAX_PHOTOS, 'color.images');
+
+        return [
+            'data' => [
+                'code' => $data['code'],
+                'name' => $data['name'],
+                'slug' => Text::slug($data['name'], 70) ?: 'color',
+                'hex' => isset($data['hex']) ? strtolower($data['hex']) : null,
+                'price_cents' => null,
+                'spec_overrides' => [],
+                'is_active' => true,
+                'sort_order' => 10,
+            ],
+            'photos' => $photos,
+        ];
     }
 
     /** @return array<string, mixed> */

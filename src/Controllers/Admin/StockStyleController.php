@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers\Admin;
 
+use App\Core\Database;
 use App\Core\HtmlSanitizer;
 use App\Core\HttpException;
 use App\Core\Request;
@@ -14,8 +15,10 @@ use App\Core\Validator;
 use App\Models\StockColor;
 use App\Models\StockMovement;
 use App\Models\StockStyle;
+use App\Services\ImageStore;
 use App\Services\Redirects;
 use App\Services\StockCatalog;
+use App\Services\StockLevels;
 use App\Services\WebRevalidator;
 
 /**
@@ -31,6 +34,9 @@ final class StockStyleController extends AdminController
         private readonly HtmlSanitizer $sanitizer,
         private readonly WebRevalidator $revalidator,
         private readonly Redirects $redirects,
+        private readonly ImageStore $images,
+        private readonly StockLevels $levels,
+        private readonly Database $db,
     ) {
     }
 
@@ -77,14 +83,30 @@ final class StockStyleController extends AdminController
         return Response::data($this->present($this->id($request)));
     }
 
-    /** POST /v1/admin/stock/styles: new styles start as drafts until they have a color with photos. */
+    /**
+     * POST /v1/admin/stock/styles: new styles start as drafts until they have a color with photos. The listing's color
+     * may come along as "color": {code, name, hex, images, sets_in_stock}; it is checked first, so the listing is saved
+     * with it or not at all.
+     */
     public function store(Request $request): Response
     {
         $this->authorize($request, 'editor');
         $data = $this->validated($request, null);
+        $color = $this->firstColor($request->all()['color'] ?? null);
         $data['status'] = 'draft';
+        $staffId = $this->staff($request)['id'];
 
-        $id = $this->styles->create($data);
+        $id = $this->db->transaction(function () use ($data, $color, $staffId): int {
+            $id = $this->styles->create($data);
+            if ($color !== null) {
+                $colorId = $this->colors->create($id, $color['data'], $color['photos']);
+                if ($color['sets'] > 0) {
+                    $this->levels->change($colorId, 'received', $color['sets'], 'Stock when the color was added', $staffId);
+                }
+            }
+
+            return $id;
+        });
         $this->revalidator->revalidate(['stock']);
 
         return Response::data($this->present($id), [], 201);
@@ -216,6 +238,36 @@ final class StockStyleController extends AdminController
         $data['set_sizes'] = StockStyle::cleanSetSizes($input['set_sizes'] ?? []);
 
         return $data;
+    }
+
+    /**
+     * A new listing's color with its photos and the sets in stock so far.
+     *
+     * @return array{data: array<string, mixed>, photos: list<array{path: string, alt: string, width: int, height: int}>, sets: int}|null
+     */
+    private function firstColor(mixed $input): ?array
+    {
+        if ($input === null) {
+            return null;
+        }
+        $data = self::nested($input, StockColor::RULES + ['sets_in_stock' => 'nullable|int|min:0|max:1000000'], 'color');
+        if ($this->colors->codeExists($data['code'])) {
+            throw new ValidationException(['color.code' => 'Another stock color already uses this code.']);
+        }
+        $photos = $this->images->photos($input['images'] ?? [], StockColor::MAX_PHOTOS, 'color.images');
+
+        return [
+            'data' => [
+                'code' => $data['code'],
+                'name' => $data['name'],
+                'slug' => Text::slug($data['name'], 70) ?: 'color',
+                'hex' => isset($data['hex']) ? strtolower($data['hex']) : null,
+                'is_active' => true,
+                'sort_order' => 10,
+            ],
+            'photos' => $photos,
+            'sets' => $data['sets_in_stock'] ?? 0,
+        ];
     }
 
     /** "mens-slim-jeans", or "mens-slim-jeans-2", "-3"… when another listing has it. */

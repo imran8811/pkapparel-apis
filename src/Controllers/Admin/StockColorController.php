@@ -23,8 +23,6 @@ use App\Services\WebRevalidator;
  */
 final class StockColorController extends AdminController
 {
-    private const MAX_PHOTOS = 12;
-
     public function __construct(
         private readonly StockStyle $styles,
         private readonly StockColor $colors,
@@ -154,10 +152,7 @@ final class StockColorController extends AdminController
     private function validated(Request $request, array $style, ?int $colorId): array
     {
         $input = $request->all();
-        $data = Validator::make($input, [
-            'code' => ['required', 'string', 'max:40', 'regex:' . StockColor::CODE_PATTERN],
-            'name' => 'required|string|max:80',
-            'hex' => ['nullable', 'regex:/^#[0-9a-fA-F]{6}$/'],
+        $data = Validator::make($input, StockColor::RULES + [
             'is_active' => 'nullable|bool',
             'sort_order' => 'nullable|int|min:0|max:1000000',
         ])->validate();
@@ -170,7 +165,7 @@ final class StockColorController extends AdminController
         $data['is_active'] ??= true;
         $data['sort_order'] ??= null;
 
-        $photos = array_key_exists('images', $input) ? $this->photos($input['images']) : null;
+        $photos = array_key_exists('images', $input) ? $this->images->photos($input['images'], StockColor::MAX_PHOTOS) : null;
 
         return [$data, $photos];
     }
@@ -184,32 +179,5 @@ final class StockColorController extends AdminController
         }
 
         return $slug;
-    }
-
-    /** @return list<array{path: string, alt: string, width: int, height: int}> */
-    private function photos(mixed $items): array
-    {
-        if (!is_array($items) || !array_is_list($items) || count($items) > self::MAX_PHOTOS) {
-            throw new ValidationException(['images' => 'Add at most ' . self::MAX_PHOTOS . ' photos.']);
-        }
-        $photos = [];
-        foreach ($items as $index => $item) {
-            $photo = Validator::make(is_array($item) ? $item : [], ['path' => 'required|string|max:255', 'alt' => 'required|string|max:200']);
-            if (!$photo->passes()) {
-                $fields = [];
-                foreach ($photo->errors() as $name => $message) {
-                    $fields["images.{$index}.{$name}"] = $message;
-                }
-                throw new ValidationException($fields);
-            }
-            $values = $photo->validate();
-            $size = $this->images->dimensions($values['path']);
-            if ($size === null) {
-                throw new ValidationException(["images.{$index}.path" => 'This photo was not found. Upload it again.']);
-            }
-            $photos[] = ['path' => $values['path'], 'alt' => $values['alt']] + $size;
-        }
-
-        return $photos;
     }
 }

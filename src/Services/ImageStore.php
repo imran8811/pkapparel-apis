@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Core\Config;
 use App\Core\Text;
 use App\Core\ValidationException;
+use App\Core\Validator;
 use GdImage;
 
 /**
@@ -212,6 +213,38 @@ final class ImageStore
         $info = @getimagesize($this->publicDir() . '/' . $path);
 
         return $info === false ? null : ['width' => (int) $info[0], 'height' => (int) $info[1]];
+    }
+
+    /**
+     * Photos a form sends, [{path, alt}] uploaded before, checked and with their sizes (as a color saves them).
+     * Problems are reported on the field, e.g. "images.2.path" when a photo is gone.
+     *
+     * @return list<array{path: string, alt: string, width: int, height: int}>
+     */
+    public function photos(mixed $items, int $max, string $field = 'images'): array
+    {
+        if (!is_array($items) || !array_is_list($items) || count($items) > $max) {
+            throw new ValidationException([$field => "Add at most {$max} photos."]);
+        }
+        $photos = [];
+        foreach ($items as $index => $item) {
+            $photo = Validator::make(is_array($item) ? $item : [], ['path' => 'required|string|max:255', 'alt' => 'required|string|max:200']);
+            if (!$photo->passes()) {
+                $fields = [];
+                foreach ($photo->errors() as $name => $message) {
+                    $fields["{$field}.{$index}.{$name}"] = $message;
+                }
+                throw new ValidationException($fields);
+            }
+            $values = $photo->validate();
+            $size = $this->dimensions($values['path']);
+            if ($size === null) {
+                throw new ValidationException(["{$field}.{$index}.path" => 'This photo was not found. Upload it again.']);
+            }
+            $photos[] = ['path' => $values['path'], 'alt' => $values['alt']] + $size;
+        }
+
+        return $photos;
     }
 
     /**

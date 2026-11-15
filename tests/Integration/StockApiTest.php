@@ -162,6 +162,44 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame(403, $this->admin('GET', '/v1/admin/stock/styles', null, self::SALES)->status(), 'Editors and admins manage stock');
     }
 
+    public function testNewStylesAndListingsAreSavedWithTheirFirstColor(): void
+    {
+        // A stock listing with its color, photo and the sets received so far.
+        $photo = $this->upload();
+        $listing = $this->admin('POST', '/v1/admin/stock/styles', $this->styleInput() + [
+            'color' => ['code' => 'TEST-ST-F1', 'name' => 'Test sky blue', 'hex' => '#8FB3D9', 'sets_in_stock' => 7, 'images' => [['path' => $photo, 'alt' => 'Test slim jeans, front']]],
+        ]);
+        self::assertSame(201, $listing->status(), (string) $listing->body());
+        $color = $listing->decoded()['data']['colors'][0];
+        self::assertSame(['TEST-ST-F1', '#8fb3d9', [$photo], 7], [$color['code'], $color['hex'], array_column($color['images'], 'path'), $this->sets('TEST-ST-F1')]);
+        self::assertSame('draft', $listing->decoded()['data']['status']);
+
+        // A taken code or a missing photo: nothing is saved.
+        $taken = $this->admin('POST', '/v1/admin/stock/styles', ['slug' => 'test-stock-taken-code'] + $this->styleInput() + ['color' => ['code' => 'TEST-ST-F1', 'name' => 'Black']]);
+        self::assertSame(422, $taken->status());
+        self::assertArrayHasKey('color.code', $taken->decoded()['error']['fields']);
+        $gone = $this->admin('POST', '/v1/admin/stock/styles', ['slug' => 'test-stock-taken-code'] + $this->styleInput() + [
+            'color' => ['code' => 'TEST-ST-F2', 'name' => 'Black', 'images' => [['path' => 'uploads/stock/gone.jpg', 'alt' => 'Gone']]],
+        ]);
+        self::assertArrayHasKey('color.images.0.path', $gone->decoded()['error']['fields']);
+        self::assertNull($this->db->fetchValue("SELECT id FROM stock_styles WHERE slug = 'test-stock-taken-code'"));
+
+        // A wholesale style with its first color and photo.
+        $wholesalePhoto = $this->upload('products');
+        $style = $this->admin('POST', '/v1/admin/products', [
+            'name' => 'Test stock first color jeans', 'slug' => 'test-stock-first-color', 'segment' => 'men', 'product_type' => 'jeans-pant',
+            'sizes' => ['30', '32'], 'price_cents' => 650,
+            'color' => ['code' => 'TEST-SW-F1', 'name' => 'Rinse', 'images' => [['path' => $wholesalePhoto, 'alt' => 'Test jeans in rinse, front']]],
+        ]);
+        self::assertSame(201, $style->status(), (string) $style->body());
+        $colors = $style->decoded()['data']['colors'];
+        self::assertSame([['TEST-SW-F1', 'rinse', [$wholesalePhoto]]], array_map(static fn (array $c): array => [$c['code'], $c['slug'], array_column($c['images'], 'path')], $colors));
+        $again = $this->admin('POST', '/v1/admin/products', ['slug' => 'test-stock-first-color-2', 'name' => 'Test stock first color jeans 2', 'segment' => 'men', 'product_type' => 'jeans-pant',
+            'sizes' => ['30'], 'price_cents' => 650, 'color' => ['code' => 'TEST-SW-F1', 'name' => 'Rinse']]);
+        self::assertArrayHasKey('color.code', $again->decoded()['error']['fields']);
+        self::assertNull($this->db->fetchValue("SELECT id FROM products WHERE slug = 'test-stock-first-color-2'"));
+    }
+
     public function testCsvExportImportAndReport(): void
     {
         // Two listings, one color each.

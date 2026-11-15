@@ -19,8 +19,6 @@ use App\Services\WebRevalidator;
 /** Colors of a style with their photos (admin and editor). */
 final class ProductColorController extends AdminController
 {
-    private const MAX_PHOTOS = 12;
-
     public function __construct(
         private readonly Product $products,
         private readonly ProductColor $colors,
@@ -119,10 +117,7 @@ final class ProductColorController extends AdminController
     {
         $productId = (int) $product['id'];
         $input = $request->all();
-        $data = Validator::make($input, [
-            'code' => ['required', 'string', 'max:40', 'regex:/^[A-Za-z0-9][A-Za-z0-9-]*$/'],
-            'name' => 'required|string|max:80',
-            'hex' => ['nullable', 'regex:/^#[0-9a-fA-F]{6}$/'],
+        $data = Validator::make($input, ProductColor::RULES + [
             'price_cents' => 'nullable|int|min:1|max:100000000',
             'spec_overrides' => 'nullable|array',
             'is_active' => 'nullable|bool',
@@ -139,7 +134,7 @@ final class ProductColorController extends AdminController
         $data['sort_order'] ??= null;
         $data['spec_overrides'] = self::specs($data['spec_overrides'] ?? [], (string) $product['product_type']);
 
-        $photos = array_key_exists('images', $input) ? $this->photos($input['images']) : null;
+        $photos = array_key_exists('images', $input) ? $this->images->photos($input['images'], ProductColor::MAX_PHOTOS) : null;
 
         return [$data, $photos];
     }
@@ -177,32 +172,5 @@ final class ProductColorController extends AdminController
         }
 
         return $clean;
-    }
-
-    /** @return list<array{path: string, alt: string, width: int, height: int}> */
-    private function photos(mixed $items): array
-    {
-        if (!is_array($items) || !array_is_list($items) || count($items) > self::MAX_PHOTOS) {
-            throw new ValidationException(['images' => 'Add at most ' . self::MAX_PHOTOS . ' photos.']);
-        }
-        $photos = [];
-        foreach ($items as $index => $item) {
-            $photo = Validator::make(is_array($item) ? $item : [], ['path' => 'required|string|max:255', 'alt' => 'required|string|max:200']);
-            if (!$photo->passes()) {
-                $fields = [];
-                foreach ($photo->errors() as $name => $message) {
-                    $fields["images.{$index}.{$name}"] = $message;
-                }
-                throw new ValidationException($fields);
-            }
-            $values = $photo->validate();
-            $size = $this->images->dimensions($values['path']);
-            if ($size === null) {
-                throw new ValidationException(["images.{$index}.path" => 'This photo was not found. Upload it again.']);
-            }
-            $photos[] = ['path' => $values['path'], 'alt' => $values['alt']] + $size;
-        }
-
-        return $photos;
     }
 }
