@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Core\Database;
+use App\Core\Text;
+use App\Core\ValidationException;
 
 /**
  * Stock styles: ready jeans sold from stock on hand, separate from the wholesale shop's made-to-order styles (Product).
@@ -163,6 +165,74 @@ final class StockStyle
         }
 
         return $counts;
+    }
+
+    /**
+     * The specs that are filled in (the jeans specs and the label), as {key: value}.
+     *
+     * @return array<string, string>
+     */
+    public static function cleanSpecs(mixed $input): array
+    {
+        if (!is_array($input)) {
+            throw new ValidationException(['specs' => 'Must be a list of details.']);
+        }
+        $specs = [];
+        foreach (self::specFields() as $field) {
+            $value = $input[$field['key']] ?? null;
+            if ($value !== null && !is_string($value)) {
+                throw new ValidationException(["specs.{$field['key']}" => 'Must be text.']);
+            }
+            $value = $value === null ? '' : trim($value);
+            if ($value === '') {
+                continue;
+            }
+            if (mb_strlen($value) > $field['max']) {
+                throw new ValidationException(["specs.{$field['key']}" => "Use at most {$field['max']} characters."]);
+            }
+            if ($field['key'] === 'stretch' && !in_array($value, ['stretch', 'non-stretch'], true)) {
+                throw new ValidationException(['specs.stretch' => 'Choose stretch or non-stretch.']);
+            }
+            $specs[$field['key']] = $value;
+        }
+
+        return $specs;
+    }
+
+    /**
+     * The set: waist sizes (inches) with the pieces of each, smallest size first.
+     *
+     * @return list<array{size: string, pcs: int}>
+     */
+    public static function cleanSetSizes(mixed $items): array
+    {
+        if (!is_array($items) || !array_is_list($items) || $items === []) {
+            throw new ValidationException(['set_sizes' => 'Add the sizes of the set.']);
+        }
+        $sizes = [];
+        foreach ($items as $item) {
+            $size = is_array($item) ? trim((string) ($item['size'] ?? '')) : '';
+            $pcs = is_array($item) ? ($item['pcs'] ?? null) : null;
+            if (!preg_match('/^\d{2}$/', $size) || (int) $size < self::SIZE_MIN || (int) $size > self::SIZE_MAX) {
+                throw new ValidationException(['set_sizes' => sprintf('Sizes are waist sizes from %d to %d.', self::SIZE_MIN, self::SIZE_MAX)]);
+            }
+            if (!is_int($pcs) || $pcs < 1 || $pcs > self::MAX_PCS_PER_SIZE) {
+                throw new ValidationException(['set_sizes' => sprintf('Each size needs 1 to %d pieces per set.', self::MAX_PCS_PER_SIZE)]);
+            }
+            if (isset($sizes[$size])) {
+                throw new ValidationException(['set_sizes' => 'Each size can only be listed once.']);
+            }
+            $sizes[$size] = $pcs;
+        }
+        ksort($sizes, SORT_NUMERIC);
+
+        return array_map(static fn (int|string $size, int $pcs): array => ['size' => (string) $size, 'pcs' => $pcs], array_keys($sizes), $sizes);
+    }
+
+    /** A listing's web address from its name and color, as for copies of the wholesale shop: mens-slim-jeans-sky-blue. */
+    public static function slugFor(string $name, string $color): string
+    {
+        return Text::slug(substr($name, 0, max(1, 189 - strlen($color))) . '-' . $color);
     }
 
     /**

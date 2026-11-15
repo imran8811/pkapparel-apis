@@ -203,76 +203,29 @@ final class StockStyleController extends AdminController
         $data['is_featured'] ??= false;
         $data['sort_order'] ??= 0;
 
-        $data['slug'] = ($data['slug'] ?? null) ?: Text::slug($data['name']);
-        if ($this->styles->slugExists($data['slug'], $id)) {
-            throw new ValidationException(['slug' => 'Another stock style already uses this web address.']);
+        if (($data['slug'] ?? null) ?: null) {
+            if ($this->styles->slugExists($data['slug'], $id)) {
+                throw new ValidationException(['slug' => 'Another stock style already uses this web address.']);
+            }
+        } else {
+            // Made from the name, which listings of the same jeans in other colors share (e.g. a duplicate): the first free one.
+            $data['slug'] = $this->freeSlug(Text::slug($data['name']), $id);
         }
         $data['description_html'] = $this->sanitizer->sanitize((string) ($data['description_html'] ?? ''));
-        $data['specs'] = self::specs($input['specs'] ?? []);
-        $data['set_sizes'] = self::setSizes($input['set_sizes'] ?? []);
+        $data['specs'] = StockStyle::cleanSpecs($input['specs'] ?? []);
+        $data['set_sizes'] = StockStyle::cleanSetSizes($input['set_sizes'] ?? []);
 
         return $data;
     }
 
-    /**
-     * The specs that are filled in (the jeans specs and the label), as {key: value}.
-     *
-     * @return array<string, string>
-     */
-    private static function specs(mixed $input): array
+    /** "mens-slim-jeans", or "mens-slim-jeans-2", "-3"… when another listing has it. */
+    private function freeSlug(string $base, ?int $id): string
     {
-        if (!is_array($input)) {
-            throw new ValidationException(['specs' => 'Must be a list of details.']);
-        }
-        $specs = [];
-        foreach (StockStyle::specFields() as $field) {
-            $value = $input[$field['key']] ?? null;
-            if ($value !== null && !is_string($value)) {
-                throw new ValidationException(["specs.{$field['key']}" => 'Must be text.']);
-            }
-            $value = $value === null ? '' : trim($value);
-            if ($value === '') {
-                continue;
-            }
-            if (mb_strlen($value) > $field['max']) {
-                throw new ValidationException(["specs.{$field['key']}" => "Use at most {$field['max']} characters."]);
-            }
-            if ($field['key'] === 'stretch' && !in_array($value, ['stretch', 'non-stretch'], true)) {
-                throw new ValidationException(['specs.stretch' => 'Choose stretch or non-stretch.']);
-            }
-            $specs[$field['key']] = $value;
+        $slug = $base;
+        for ($n = 2; $this->styles->slugExists($slug, $id); $n++) {
+            $slug = rtrim(substr($base, 0, 189 - strlen((string) $n)), '-') . "-{$n}";
         }
 
-        return $specs;
-    }
-
-    /**
-     * The set: waist sizes (inches) with the pieces of each, smallest size first.
-     *
-     * @return list<array{size: string, pcs: int}>
-     */
-    private static function setSizes(mixed $items): array
-    {
-        if (!is_array($items) || !array_is_list($items) || $items === []) {
-            throw new ValidationException(['set_sizes' => 'Add the sizes of the set.']);
-        }
-        $sizes = [];
-        foreach ($items as $item) {
-            $size = is_array($item) ? trim((string) ($item['size'] ?? '')) : '';
-            $pcs = is_array($item) ? ($item['pcs'] ?? null) : null;
-            if (!preg_match('/^\d{2}$/', $size) || (int) $size < StockStyle::SIZE_MIN || (int) $size > StockStyle::SIZE_MAX) {
-                throw new ValidationException(['set_sizes' => sprintf('Sizes are waist sizes from %d to %d.', StockStyle::SIZE_MIN, StockStyle::SIZE_MAX)]);
-            }
-            if (!is_int($pcs) || $pcs < 1 || $pcs > StockStyle::MAX_PCS_PER_SIZE) {
-                throw new ValidationException(['set_sizes' => sprintf('Each size needs 1 to %d pieces per set.', StockStyle::MAX_PCS_PER_SIZE)]);
-            }
-            if (isset($sizes[$size])) {
-                throw new ValidationException(['set_sizes' => 'Each size can only be listed once.']);
-            }
-            $sizes[$size] = $pcs;
-        }
-        ksort($sizes, SORT_NUMERIC);
-
-        return array_map(static fn (int|string $size, int $pcs): array => ['size' => (string) $size, 'pcs' => $pcs], array_keys($sizes), $sizes);
+        return $slug;
     }
 }

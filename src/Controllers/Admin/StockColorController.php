@@ -155,7 +155,7 @@ final class StockColorController extends AdminController
     {
         $input = $request->all();
         $data = Validator::make($input, [
-            'code' => ['required', 'string', 'max:40', 'regex:/^[A-Za-z0-9][A-Za-z0-9-]*$/'],
+            'code' => ['required', 'string', 'max:40', 'regex:' . StockColor::CODE_PATTERN],
             'name' => 'required|string|max:80',
             'hex' => ['nullable', 'regex:/^#[0-9a-fA-F]{6}$/'],
             'is_active' => 'nullable|bool',

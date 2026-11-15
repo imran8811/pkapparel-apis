@@ -12,6 +12,9 @@ use App\Core\Database;
  */
 final class StockColor
 {
+    /** Color codes: letters, digits and dashes, unique among stock colors (shown to buyers). */
+    public const CODE_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9-]*$/';
+
     public function __construct(private readonly Database $db)
     {
     }

@@ -11,16 +11,19 @@ use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Services\StockCounts;
 use App\Services\StockFromWholesale;
+use App\Services\StockListingImport;
 
 /**
  * Stock in bulk (editors and admins): the stock list as CSV, stock counts imported from a CSV file (a preview first,
- * then applied), the wholesale shop's jeans copied into the stock, and the stock report (sales staff may read it too).
+ * then applied), new listings imported from a CSV file (the same way), the wholesale shop's jeans copied into the
+ * stock, and the stock report (sales staff may read it too).
  */
 final class StockToolsController extends AdminController
 {
     public function __construct(
         private readonly StockCounts $counts,
         private readonly StockFromWholesale $fromWholesale,
+        private readonly StockListingImport $listingImport,
     ) {
     }
 
@@ -42,6 +45,26 @@ final class StockToolsController extends AdminController
         ])->validate();
 
         return Response::data($this->counts->import($data['csv'], (bool) ($data['apply'] ?? false), $this->staff($request)['id']));
+    }
+
+    /** GET /v1/admin/stock/import-listings/template: the columns of a new-listings file, as an empty CSV. */
+    public function listingsTemplate(Request $request): Response
+    {
+        $this->authorize($request, 'editor');
+
+        return Response::file(StockListingImport::template(), 'text/csv; charset=utf-8', 'stock-listings-template.csv');
+    }
+
+    /** POST /v1/admin/stock/import-listings {csv, apply}: the listings a file would create; with apply true, creates them. */
+    public function importListings(Request $request): Response
+    {
+        $this->authorize($request, 'editor');
+        $data = Validator::make($request->all(), [
+            'csv' => 'required|string|max:' . StockListingImport::MAX_BYTES,
+            'apply' => 'nullable|bool',
+        ])->validate();
+
+        return Response::data($this->listingImport->import($data['csv'], (bool) ($data['apply'] ?? false), $this->staff($request)['id']));
     }
 
     /** GET /v1/admin/stock/from-wholesale: the wholesale shop's jeans for men and boys, and what copying each one makes. */

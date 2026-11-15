@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Core\Csv;
 use App\Core\Database;
 use App\Core\Format;
 
@@ -80,7 +81,7 @@ final class StockCounts
 
             return $result;
         }
-        $lines = $this->rows($csv);
+        $lines = Csv::read($csv);
         $header = array_map(static fn (string $cell): string => mb_strtolower(trim($cell)), array_shift($lines) ?? []);
         $codeColumn = self::column($header, ['color code', 'code']);
         $setsColumn = self::column($header, ['sets in stock', 'sets']);
@@ -208,31 +209,6 @@ final class StockCounts
         }
 
         return ['days' => $days, 'since' => Format::date(gmdate(DATE_ATOM, time() - $days * 86400)), 'rows' => $report, 'totals' => $totals];
-    }
-
-    /**
-     * @return list<list<string>> The file's lines as cells, with the delimiter Excel used (comma, semicolon or tab).
-     */
-    private function rows(string $csv): array
-    {
-        $csv = str_starts_with($csv, "\xEF\xBB\xBF") ? substr($csv, 3) : $csv;
-        $first = strtok($csv, "\r\n") ?: '';
-        $delimiter = ',';
-        foreach ([';', "\t"] as $candidate) {
-            if (substr_count($first, $candidate) > substr_count($first, $delimiter)) {
-                $delimiter = $candidate;
-            }
-        }
-        $stream = fopen('php://temp', 'r+');
-        fwrite($stream, $csv);
-        rewind($stream);
-        $rows = [];
-        while (($cells = fgetcsv($stream, null, $delimiter, '"', '')) !== false) {
-            $rows[] = array_map(static fn (mixed $cell): string => (string) $cell, $cells);
-        }
-        fclose($stream);
-
-        return $rows;
     }
 
     /**

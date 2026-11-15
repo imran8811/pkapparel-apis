@@ -6,7 +6,6 @@ namespace App\Services;
 
 use App\Core\Database;
 use App\Core\HtmlSanitizer;
-use App\Core\Text;
 use App\Models\Product;
 use App\Models\ProductColor;
 use App\Models\ProductTypes;
@@ -292,7 +291,7 @@ final class StockFromWholesale
     /** The listing's web address, the style's and the color's: mens-slim-stretch-jeans-sky-blue. */
     private static function slug(string $style, string $color): string
     {
-        return Text::slug(substr($style, 0, max(1, 189 - strlen($color))) . '-' . $color);
+        return StockStyle::slugFor($style, $color);
     }
 
     /**

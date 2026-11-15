@@ -155,6 +155,9 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame(450000, $boys->decoded()['data']['set_price_cents'], '3 pieces × Rs 1,500');
         self::assertSame(422, $this->admin('POST', '/v1/admin/stock/styles', ['piece_price_cents' => 50] + $this->styleInput())->status(), 'A price per piece of at least Rs 1');
         self::assertSame(422, $this->admin('POST', '/v1/admin/stock/styles', ['slug' => 'test-stock-boys-jeans'] + $this->styleInput())->status(), 'Web addresses are unique');
+        // Without a web address, it is made from the name, numbered when another listing (another color) has it.
+        $sameName = fn (): string => $this->admin('POST', '/v1/admin/stock/styles', ['name' => 'Test stock boys jeans', 'slug' => null] + $this->styleInput())->decoded()['data']['slug'];
+        self::assertSame(['test-stock-boys-jeans-2', 'test-stock-boys-jeans-3'], [$sameName(), $sameName()]);
 
         self::assertSame(403, $this->admin('GET', '/v1/admin/stock/styles', null, self::SALES)->status(), 'Editors and admins manage stock');
     }
@@ -192,6 +195,42 @@ final class StockApiTest extends IntegrationTestCase
         $row = array_values(array_filter($report['rows'], static fn (array $r): bool => $r['code'] === 'TEST-ST-B'))[0];
         self::assertSame([2, 2, 2 * 1200000, 4], [$row['sets_in_stock'], $row['sold_sets'], $row['value_cents'], $row['received_sets']]);
         self::assertSame(403, $this->admin('GET', '/v1/admin/stock/export', null, self::SALES)->status(), 'Sales staff read the report only');
+    }
+
+    public function testNewListingsAreImportedFromACsvFile(): void
+    {
+        $template = $this->admin('GET', '/v1/admin/stock/import-listings/template');
+        self::assertSame(200, $template->status());
+        self::assertStringStartsWith("\xEF\xBB\xBFName,Style no.,For,Color,Color code", $template->body());
+
+        $csv = "Name;For;Color;Color code;Set;Price per piece (Rs);Sets in stock;Fit;Label\n"
+            . "Test stock import slim;Men;Black;TEST-IMP-1;28x1, 30x2;980;5;Slim;Own label\n"
+            . "Test stock import straight;Boys;Mid blue;TEST-IMP-2;16x2 18x2;650;;Straight;\n";
+
+        // A file with a problem creates nothing, and names the line.
+        $bad = $this->admin('POST', '/v1/admin/stock/import-listings', ['csv' => $csv . "Test stock import wide;Men;Grey;TEST-IMP-1;30x1;700;;;\n", 'apply' => true])->decoded()['data'];
+        self::assertFalse($bad['applied']);
+        self::assertSame([['line' => 4, 'message' => 'The code “TEST-IMP-1” is also on line 2.']], $bad['errors']);
+        self::assertNull($this->db->fetchValue("SELECT id FROM stock_styles WHERE slug = 'test-stock-import-slim-black'"));
+
+        $preview = $this->admin('POST', '/v1/admin/stock/import-listings', ['csv' => $csv])->decoded()['data'];
+        self::assertSame([[], false, 2], [$preview['errors'], $preview['applied'], count($preview['listings'])]);
+        $first = $preview['listings'][0];
+        self::assertSame([3, 98000, 294000, 5, null], [$first['set_pieces'], $first['piece_price_cents'], $first['set_price_cents'], $first['sets_in_stock'], $first['id']]);
+        self::assertNull($this->db->fetchValue("SELECT id FROM stock_styles WHERE slug = 'test-stock-import-slim-black'"), 'A preview creates nothing');
+
+        $applied = $this->admin('POST', '/v1/admin/stock/import-listings', ['csv' => $csv, 'apply' => true])->decoded()['data'];
+        self::assertTrue($applied['applied']);
+        $style = $this->admin('GET', "/v1/admin/stock/styles/{$applied['listings'][0]['id']}")->decoded()['data'];
+        self::assertSame(['test-stock-import-slim-black', 'draft', 'Slim', 'Own label', 5], [$style['slug'], $style['status'], $style['specs']['fit'], $style['specs']['label'], $style['sets_in_stock']]);
+        self::assertSame('Stock when the listing was imported', $this->admin('GET', '/v1/admin/stock/movements', ['style_id' => $style['id']])->decoded()['data'][0]['note']);
+        self::assertSame('boys', $this->admin('GET', "/v1/admin/stock/styles/{$applied['listings'][1]['id']}")->decoded()['data']['segment']);
+
+        // The same file again creates nothing twice: each line's code, and its name and color, are taken.
+        $again = $this->admin('POST', '/v1/admin/stock/import-listings', ['csv' => $csv, 'apply' => true])->decoded()['data'];
+        self::assertFalse($again['applied']);
+        self::assertSame([2, 2, 3, 3], array_column($again['errors'], 'line'));
+        self::assertSame(403, $this->admin('POST', '/v1/admin/stock/import-listings', ['csv' => $csv], self::SALES)->status(), 'Editors and admins only');
     }
 
     public function testWholesaleColorsAreCopiedAsListingsOfTheirOwn(): void
