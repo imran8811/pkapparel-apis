@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Models\ProductTypes;
 use App\Models\StockColor;
 use App\Models\StockStyle;
 
@@ -53,10 +52,10 @@ final class StockCatalog
             'style_no' => $style['style_no'],
             'segment' => $style['segment'],
             'specs' => self::specValues($style),
-            // Labeled and in display order, as for the wholesale shop's jeans ("Inseam" for length…).
+            // Labeled and in display order, as for the wholesale shop's jeans ("Inseam" for length…), then the label.
             'spec_fields' => array_map(
                 static fn (array $field): array => ['key' => $field['key'], 'label' => $field['label']],
-                ProductTypes::specs(StockStyle::PRODUCT_TYPE),
+                StockStyle::specFields(),
             ),
             'description_html' => (string) $style['description_html'],
             'set' => ['sizes' => $style['set_sizes'], 'pieces' => $style['set_pieces']],
@@ -81,7 +80,7 @@ final class StockCatalog
     }
 
     /**
-     * The style's values for the jeans specs, in display order (null when not set).
+     * The style's values for its specs (the jeans specs and the label), in display order (null when not set).
      *
      * @param array<string, mixed> $style decoded stock_styles row
      * @return array<string, ?string>
@@ -89,7 +88,7 @@ final class StockCatalog
     public static function specValues(array $style): array
     {
         $values = [];
-        foreach (ProductTypes::specKeys(StockStyle::PRODUCT_TYPE) as $key) {
+        foreach (array_column(StockStyle::specFields(), 'key') as $key) {
             $value = $style['specs'][$key] ?? null;
             $values[$key] = $value === null || $value === '' ? null : (string) $value;
         }

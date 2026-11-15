@@ -11,7 +11,6 @@ use App\Core\Response;
 use App\Core\Text;
 use App\Core\ValidationException;
 use App\Core\Validator;
-use App\Models\ProductTypes;
 use App\Models\StockColor;
 use App\Models\StockMovement;
 use App\Models\StockStyle;
@@ -216,7 +215,7 @@ final class StockStyleController extends AdminController
     }
 
     /**
-     * The jeans specs that are filled in, as {key: value}.
+     * The specs that are filled in (the jeans specs and the label), as {key: value}.
      *
      * @return array<string, string>
      */
@@ -226,7 +225,7 @@ final class StockStyleController extends AdminController
             throw new ValidationException(['specs' => 'Must be a list of details.']);
         }
         $specs = [];
-        foreach (ProductTypes::specs(StockStyle::PRODUCT_TYPE) as $field) {
+        foreach (StockStyle::specFields() as $field) {
             $value = $input[$field['key']] ?? null;
             if ($value !== null && !is_string($value)) {
                 throw new ValidationException(["specs.{$field['key']}" => 'Must be text.']);

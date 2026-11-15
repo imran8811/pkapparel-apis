@@ -21,6 +21,11 @@ final class StockStyle
     /** Stock is jeans only: the specs (labels and suggestions) are those of the wholesale shop's jeans pants. */
     public const PRODUCT_TYPE = 'jeans-pant';
 
+    /** Details only stock listings have, shown after the jeans specs (owner request 2026-11-15: the label). */
+    private const OWN_SPECS = [
+        ['key' => 'label', 'label' => 'Label', 'max' => 80, 'suggestions' => []],
+    ];
+
     /** Waist sizes in inches: boys' jeans start at 16, men's go up to 48. */
     public const SIZE_MIN = 16;
 
@@ -35,6 +40,16 @@ final class StockStyle
 
     public function __construct(private readonly Database $db)
     {
+    }
+
+    /**
+     * The details a stock listing has, in display order: the jeans specs of the wholesale shop, then the stock's own.
+     *
+     * @return list<array{key: string, label: string, max: int, suggestions: list<string>}>
+     */
+    public static function specFields(): array
+    {
+        return [...ProductTypes::specs(self::PRODUCT_TYPE), ...self::OWN_SPECS];
     }
 
     /**

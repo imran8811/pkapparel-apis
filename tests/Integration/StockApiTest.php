@@ -71,6 +71,7 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame([200000, 1200000], [$style['piece_price_cents'], $style['set_price_cents']], 'A set costs its pieces times the price per piece');
         self::assertSame('stretch', $style['specs']['stretch']);
         self::assertNull($style['specs']['rise']);
+        self::assertSame('Test label', $style['specs']['label'], 'The label is a stock-only detail, kept trimmed');
 
         $activate = $this->admin('PUT', "/v1/admin/stock/styles/{$style['id']}", ['status' => 'active'] + $this->styleInput());
         self::assertSame(422, $activate->status(), 'A shown style needs a color with a photo');
@@ -103,6 +104,8 @@ final class StockApiTest extends IntegrationTestCase
         $page = $this->send('GET', '/v1/stock/styles/test-stock-slim-jeans')->decoded()['data'];
         self::assertSame(6, $page['set']['pieces']);
         self::assertSame('Inseam', array_column($page['spec_fields'], 'label', 'key')['length']);
+        self::assertSame(['key' => 'label', 'label' => 'Label'], $page['spec_fields'][array_key_last($page['spec_fields'])], 'The label comes after the jeans specs');
+        self::assertSame('Test label', $page['specs']['label']);
         self::assertSame(12, $page['colors'][0]['sets_in_stock']);
         self::assertSame(404, $this->send('GET', '/v1/stock/styles/test-stock-does-not-exist')->status());
     }
@@ -348,7 +351,7 @@ final class StockApiTest extends IntegrationTestCase
             'name' => 'Test stock slim jeans',
             'slug' => 'test-stock-slim-jeans',
             'segment' => 'men',
-            'specs' => ['fit' => 'Slim', 'stretch' => 'stretch', 'wash' => 'Stone wash', 'neckline' => 'ignored'],
+            'specs' => ['fit' => 'Slim', 'stretch' => 'stretch', 'wash' => 'Stone wash', 'label' => ' Test label ', 'neckline' => 'ignored'],
             'set_sizes' => [['size' => '32', 'pcs' => 2], ['size' => '28', 'pcs' => 1], ['size' => '34', 'pcs' => 1], ['size' => '30', 'pcs' => 2]],
             'piece_price_cents' => 200000,
         ];
