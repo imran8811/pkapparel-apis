@@ -17,9 +17,11 @@ final class StockColor
 
     public const MAX_PHOTOS = 12;
 
+    public const CODE_RULES = ['string', 'max:40', 'regex:' . self::CODE_PATTERN];
+
     /** What every color needs (the color form and a new listing's color). */
     public const RULES = [
-        'code' => ['required', 'string', 'max:40', 'regex:' . self::CODE_PATTERN],
+        'code' => ['required', ...self::CODE_RULES],
         'name' => 'required|string|max:80',
         'hex' => ['nullable', 'regex:/^#[0-9a-fA-F]{6}$/'],
     ];
@@ -88,6 +90,14 @@ final class StockColor
     public function codeExists(string $code, ?int $exceptId = null): bool
     {
         return $this->db->fetchValue('SELECT id FROM stock_colors WHERE code = ? AND id <> ?', [$code, $exceptId ?? 0]) !== null;
+    }
+
+    /** The code for a color added without one: "ST-" and the number after the highest such code, e.g. "ST-1052". */
+    public function nextCode(): string
+    {
+        $highest = (int) $this->db->fetchValue("SELECT MAX(CAST(SUBSTRING(code, 4) AS UNSIGNED)) FROM stock_colors WHERE code REGEXP '^ST-[0-9]+$'");
+
+        return 'ST-' . max($highest + 1, 1001);
     }
 
     public function slugExists(int $styleId, string $slug, ?int $exceptId = null): bool

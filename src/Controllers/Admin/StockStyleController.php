@@ -85,8 +85,8 @@ final class StockStyleController extends AdminController
 
     /**
      * POST /v1/admin/stock/styles: new styles start as drafts until they have a color with photos. The listing's color
-     * may come along as "color": {code, name, hex, images, sets_in_stock}; it is checked first, so the listing is saved
-     * with it or not at all.
+     * may come along as "color": {name, images, sets_in_stock, code?, hex?}; it is checked first, so the listing is
+     * saved with it or not at all.
      */
     public function store(Request $request): Response
     {
@@ -241,7 +241,8 @@ final class StockStyleController extends AdminController
     }
 
     /**
-     * A new listing's color with its photos and the sets in stock so far.
+     * A new listing's color with its photos and the sets in stock so far. Without a code (the add form has none), the
+     * next free one is used.
      *
      * @return array{data: array<string, mixed>, photos: list<array{path: string, alt: string, width: int, height: int}>, sets: int}|null
      */
@@ -250,10 +251,11 @@ final class StockStyleController extends AdminController
         if ($input === null) {
             return null;
         }
-        $data = self::nested($input, StockColor::RULES + ['sets_in_stock' => 'nullable|int|min:0|max:1000000'], 'color');
-        if ($this->colors->codeExists($data['code'])) {
+        $data = self::nested($input, ['code' => ['nullable', ...StockColor::CODE_RULES]] + StockColor::RULES + ['sets_in_stock' => 'nullable|int|min:0|max:1000000'], 'color');
+        if (isset($data['code']) && $this->colors->codeExists($data['code'])) {
             throw new ValidationException(['color.code' => 'Another stock color already uses this code.']);
         }
+        $data['code'] ??= $this->colors->nextCode();
         $photos = $this->images->photos($input['images'] ?? [], StockColor::MAX_PHOTOS, 'color.images');
 
         return [

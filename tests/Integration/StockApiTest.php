@@ -198,6 +198,16 @@ final class StockApiTest extends IntegrationTestCase
             'sizes' => ['30'], 'price_cents' => 650, 'color' => ['code' => 'TEST-SW-F1', 'name' => 'Rinse']]);
         self::assertArrayHasKey('color.code', $again->decoded()['error']['fields']);
         self::assertNull($this->db->fetchValue("SELECT id FROM products WHERE slug = 'test-stock-first-color-2'"));
+
+        // The add forms send no code: the next free one is used.
+        $autoListing = $this->admin('POST', '/v1/admin/stock/styles', ['slug' => 'test-stock-auto-code'] + $this->styleInput() + ['color' => ['name' => 'Test black']]);
+        self::assertSame(201, $autoListing->status(), (string) $autoListing->body());
+        self::assertMatchesRegularExpression('/^ST-\d{4,}$/', $autoListing->decoded()['data']['colors'][0]['code']);
+        $autoStyle = $this->admin('POST', '/v1/admin/products', ['slug' => 'test-stock-auto-code', 'name' => 'Test stock auto code jeans', 'segment' => 'men', 'product_type' => 'jeans-pant',
+            'sizes' => ['30'], 'price_cents' => 650, 'color' => ['name' => 'Black']]);
+        self::assertSame(201, $autoStyle->status(), (string) $autoStyle->body());
+        self::assertMatchesRegularExpression('/^\d{4,}$/', $autoStyle->decoded()['data']['colors'][0]['code']);
+        self::assertSame(422, $this->admin('POST', '/v1/admin/stock/styles', ['slug' => 'test-stock-no-name'] + $this->styleInput() + ['color' => ['images' => []]])->status(), 'A color needs its name');
     }
 
     public function testCsvExportImportAndReport(): void

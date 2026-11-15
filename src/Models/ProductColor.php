@@ -17,9 +17,12 @@ final class ProductColor
 
     public const MAX_PHOTOS = 12;
 
+    /** Letters, digits and dashes, e.g. "1051" (old article numbers are the codes of imported colors). */
+    public const CODE_RULES = ['string', 'max:40', 'regex:/^[A-Za-z0-9][A-Za-z0-9-]*$/'];
+
     /** What every color needs (the color form and a new style's first color). */
     public const RULES = [
-        'code' => ['required', 'string', 'max:40', 'regex:/^[A-Za-z0-9][A-Za-z0-9-]*$/'],
+        'code' => ['required', ...self::CODE_RULES],
         'name' => 'required|string|max:80',
         'hex' => ['nullable', 'regex:/^#[0-9a-fA-F]{6}$/'],
     ];
@@ -93,6 +96,14 @@ final class ProductColor
     public function codeExists(string $code, ?int $exceptId = null): bool
     {
         return $this->db->fetchValue('SELECT id FROM product_colors WHERE code = ? AND id <> ?', [$code, $exceptId ?? 0]) !== null;
+    }
+
+    /** The code for a color added without one: the number after the highest numeric code, e.g. "1052". */
+    public function nextCode(): string
+    {
+        $highest = (int) $this->db->fetchValue("SELECT MAX(CAST(code AS UNSIGNED)) FROM product_colors WHERE code REGEXP '^[0-9]+$'");
+
+        return (string) max($highest + 1, 1001);
     }
 
     public function slugExists(int $productId, string $slug, ?int $exceptId = null): bool

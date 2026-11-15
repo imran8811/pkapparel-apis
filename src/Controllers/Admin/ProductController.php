@@ -82,7 +82,7 @@ final class ProductController extends AdminController
 
     /**
      * POST /v1/admin/products: new styles start as drafts until they have a color with photos. The first color may come
-     * along as "color": {code, name, hex, images}; it is checked first, so the style is saved with it or not at all.
+     * along as "color": {name, images, code?, hex?}; it is checked first, so the style is saved with it or not at all.
      */
     public function store(Request $request): Response
     {
@@ -148,7 +148,7 @@ final class ProductController extends AdminController
 
     /**
      * A new style's first color, with its photos (more colors, their own prices and fabric details are added on the
-     * style's page).
+     * style's page). Without a code (the add form has none), the next free one is used.
      *
      * @return array{data: array<string, mixed>, photos: list<array{path: string, alt: string, width: int, height: int}>}|null
      */
@@ -157,10 +157,11 @@ final class ProductController extends AdminController
         if ($input === null) {
             return null;
         }
-        $data = self::nested($input, ProductColor::RULES, 'color');
-        if ($this->colors->codeExists($data['code'])) {
+        $data = self::nested($input, ['code' => ['nullable', ...ProductColor::CODE_RULES]] + ProductColor::RULES, 'color');
+        if (isset($data['code']) && $this->colors->codeExists($data['code'])) {
             throw new ValidationException(['color.code' => 'Another color already uses this code.']);
         }
+        $data['code'] ??= $this->colors->nextCode();
         $photos = $this->images->photos($input['images'] ?? [], ProductColor::MAX_PHOTOS, 'color.images');
 
         return [
