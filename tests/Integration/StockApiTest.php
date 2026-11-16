@@ -65,7 +65,7 @@ final class StockApiTest extends IntegrationTestCase
         $created = $this->admin('POST', '/v1/admin/stock/styles', $this->styleInput());
         self::assertSame(201, $created->status(), (string) $created->body());
         $style = $created->decoded()['data'];
-        self::assertSame('draft', $style['status'], 'New styles start as drafts');
+        self::assertSame('draft', $style['status'], 'Created without a photo: a draft');
         self::assertSame([['size' => '28', 'pcs' => 1], ['size' => '30', 'pcs' => 2], ['size' => '32', 'pcs' => 2], ['size' => '34', 'pcs' => 1]], $style['set_sizes'], 'Sizes are sorted');
         self::assertSame(6, $style['set_pieces']);
         self::assertSame([200000, 1200000], [$style['piece_price_cents'], $style['set_price_cents']], 'A set costs its pieces times the price per piece');
@@ -172,7 +172,7 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame(201, $listing->status(), (string) $listing->body());
         $color = $listing->decoded()['data']['colors'][0];
         self::assertSame(['TEST-ST-F1', '#8fb3d9', [$photo], 7], [$color['code'], $color['hex'], array_column($color['images'], 'path'), $this->sets('TEST-ST-F1')]);
-        self::assertSame('draft', $listing->decoded()['data']['status']);
+        self::assertSame('active', $listing->decoded()['data']['status'], 'Created with a photo: shown at once');
 
         // A taken code or a missing photo: nothing is saved.
         $taken = $this->admin('POST', '/v1/admin/stock/styles', ['slug' => 'test-stock-taken-code'] + $this->styleInput() + ['color' => ['code' => 'TEST-ST-F1', 'name' => 'Black']]);
@@ -194,6 +194,7 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame(201, $style->status(), (string) $style->body());
         $colors = $style->decoded()['data']['colors'];
         self::assertSame([['TEST-SW-F1', 'rinse', [$wholesalePhoto]]], array_map(static fn (array $c): array => [$c['code'], $c['slug'], array_column($c['images'], 'path')], $colors));
+        self::assertSame('active', $style->decoded()['data']['status'], 'Created with a photo: shown in the shop at once');
         $again = $this->admin('POST', '/v1/admin/products', ['slug' => 'test-stock-first-color-2', 'name' => 'Test stock first color jeans 2', 'segment' => 'men', 'product_type' => 'jeans-pant',
             'sizes' => ['30'], 'price_cents' => 650, 'color' => ['code' => 'TEST-SW-F1', 'name' => 'Rinse']]);
         self::assertArrayHasKey('color.code', $again->decoded()['error']['fields']);
@@ -203,6 +204,7 @@ final class StockApiTest extends IntegrationTestCase
         $autoListing = $this->admin('POST', '/v1/admin/stock/styles', ['slug' => 'test-stock-auto-code'] + $this->styleInput() + ['color' => ['name' => 'Test black']]);
         self::assertSame(201, $autoListing->status(), (string) $autoListing->body());
         self::assertMatchesRegularExpression('/^ST-\d{4,}$/', $autoListing->decoded()['data']['colors'][0]['code']);
+        self::assertSame('draft', $autoListing->decoded()['data']['status'], 'Without a photo it cannot be shown, so it is a draft');
         $autoStyle = $this->admin('POST', '/v1/admin/products', ['slug' => 'test-stock-auto-code', 'name' => 'Test stock auto code jeans', 'segment' => 'men', 'product_type' => 'jeans-pant',
             'sizes' => ['30'], 'price_cents' => 650, 'color' => ['name' => 'Black']]);
         self::assertSame(201, $autoStyle->status(), (string) $autoStyle->body());

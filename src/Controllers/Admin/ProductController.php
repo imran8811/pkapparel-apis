@@ -81,15 +81,16 @@ final class ProductController extends AdminController
     }
 
     /**
-     * POST /v1/admin/products: new styles start as drafts until they have a color with photos. The first color may come
-     * along as "color": {name, images, code?, hex?}; it is checked first, so the style is saved with it or not at all.
+     * POST /v1/admin/products: the first color may come along as "color": {name, images, code?, hex?}; it is checked
+     * first, so the style is saved with it or not at all. With a photo, the style is shown in the shop at once (owner
+     * request 2026-11-16: the add form publishes); without one it is a draft, as a style needs a photo to be shown.
      */
     public function store(Request $request): Response
     {
         $this->authorize($request, 'editor');
         $data = $this->validated($request, null);
         $color = $this->firstColor($request->all()['color'] ?? null);
-        $data['status'] = 'draft';
+        $data['status'] = $color !== null && $color['photos'] !== [] ? 'active' : 'draft';
         $tiers = $data['tiers'];
         unset($data['tiers']);
 
@@ -102,7 +103,7 @@ final class ProductController extends AdminController
 
             return $id;
         });
-        $this->revalidator->revalidate(['products']);
+        $this->revalidator->revalidate(['products', 'product:' . $data['slug']]);
 
         return Response::data($this->present($id), [], 201);
     }

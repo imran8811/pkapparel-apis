@@ -151,7 +151,7 @@ final class CatalogApiTest extends IntegrationTestCase
         $style = $this->admin('POST', '/v1/admin/products', $this->styleInput());
         self::assertSame(201, $style->status());
         $style = $style->decoded()['data'];
-        self::assertSame('draft', $style['status'], 'New styles start as drafts');
+        self::assertSame('draft', $style['status'], 'Created without a photo: a draft');
         self::assertSame('test-style-denim-jacket', $style['slug']);
 
         $activate = $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['status' => 'active'] + $this->styleInput());

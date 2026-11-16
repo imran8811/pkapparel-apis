@@ -84,16 +84,17 @@ final class StockStyleController extends AdminController
     }
 
     /**
-     * POST /v1/admin/stock/styles: new styles start as drafts until they have a color with photos. The listing's color
-     * may come along as "color": {name, images, sets_in_stock, code?, hex?}; it is checked first, so the listing is
-     * saved with it or not at all.
+     * POST /v1/admin/stock/styles: the listing's color may come along as "color": {name, images, sets_in_stock, code?,
+     * hex?}; it is checked first, so the listing is saved with it or not at all. With a photo, the listing is shown on
+     * the stock pages at once (owner request 2026-11-16: the add form publishes); without one it is a draft, as a
+     * listing needs a photo to be shown.
      */
     public function store(Request $request): Response
     {
         $this->authorize($request, 'editor');
         $data = $this->validated($request, null);
         $color = $this->firstColor($request->all()['color'] ?? null);
-        $data['status'] = 'draft';
+        $data['status'] = $color !== null && $color['photos'] !== [] ? 'active' : 'draft';
         $staffId = $this->staff($request)['id'];
 
         $id = $this->db->transaction(function () use ($data, $color, $staffId): int {
@@ -107,7 +108,7 @@ final class StockStyleController extends AdminController
 
             return $id;
         });
-        $this->revalidator->revalidate(['stock']);
+        $this->revalidator->revalidate(['stock', 'stock:' . $data['slug']]);
 
         return Response::data($this->present($id), [], 201);
     }
