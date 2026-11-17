@@ -115,13 +115,6 @@ final class ProductController extends AdminController
         $id = $this->id($request);
         $before = $this->findOrFail($id);
         $data = $this->validated($request, $id);
-        // A web address made from the name follows a new name (numbered when another style has it), unless staff typed another.
-        if ($data['slug'] === $before['slug']) {
-            $renamed = Text::renamedSlug($before['slug'], $before['name'], $data['name']);
-            if ($renamed !== null) {
-                $data['slug'] = Text::freeSlug($renamed, fn (string $slug): bool => $this->products->slugExists($slug, $id));
-            }
-        }
 
         if ($data['status'] === 'active' && !$this->hasColorWithPhoto($id)) {
             throw new ValidationException(['status' => 'Add at least one color with a photo before showing this style in the shop.']);

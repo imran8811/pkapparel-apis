@@ -129,14 +129,6 @@ final class StockStyleController extends AdminController
         $id = $this->id($request);
         $before = $this->findOrFail($id);
         $data = $this->validated($request, $before);
-        // A web address made from the name (and the color, if it has it) follows a new name, unless staff typed another.
-        if ($data['slug'] === $before['slug']) {
-            $color = $this->colors->forStyles([$id], false)[$id][0] ?? null;
-            $renamed = Text::renamedSlug($before['slug'], $before['name'], $data['name'], $color === null ? '' : '-' . $color['slug']);
-            if ($renamed !== null) {
-                $data['slug'] = $this->freeSlug($renamed, $id);
-            }
-        }
 
         if ($data['status'] === 'active' && !$this->hasColorWithPhoto($id)) {
             throw new ValidationException(['status' => 'Add at least one color with a photo before showing this style.']);
@@ -319,6 +311,11 @@ final class StockStyleController extends AdminController
     /** "mens-slim-jeans", or "mens-slim-jeans-2", "-3"… when another listing has it. */
     private function freeSlug(string $base, ?int $id): string
     {
-        return Text::freeSlug($base, fn (string $slug): bool => $this->styles->slugExists($slug, $id));
+        $slug = $base;
+        for ($n = 2; $this->styles->slugExists($slug, $id); $n++) {
+            $slug = rtrim(substr($base, 0, 189 - strlen((string) $n)), '-') . "-{$n}";
+        }
+
+        return $slug;
     }
 }

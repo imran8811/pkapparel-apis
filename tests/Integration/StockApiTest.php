@@ -535,32 +535,6 @@ final class StockApiTest extends IntegrationTestCase
         ));
     }
 
-    public function testAnAddressMadeFromTheNameFollowsANewName(): void
-    {
-        // A duplicate keeps the name, so its address is numbered; renamed after it was created, its address follows.
-        $this->admin('POST', '/v1/admin/stock/styles', $this->styleInput());
-        $copy = $this->admin('POST', '/v1/admin/stock/styles', ['slug' => null] + $this->styleInput())->decoded()['data'];
-        self::assertSame('test-stock-slim-jeans-2', $copy['slug']);
-        $renamed = $this->admin('PUT', "/v1/admin/stock/styles/{$copy['id']}", ['name' => 'Test stock skinny jeans', 'slug' => $copy['slug']] + $this->styleInput());
-        self::assertSame(200, $renamed->status(), (string) $renamed->body());
-        self::assertSame('test-stock-skinny-jeans', $renamed->decoded()['data']['slug']);
-
-        // With its color in the address (as copies from the wholesale shop and imported listings have it), the color
-        // stays; a shown listing keeps its old address working.
-        $listing = $this->admin('POST', '/v1/admin/stock/styles', ['name' => 'Test stock wide jeans', 'slug' => 'test-stock-wide-jeans-mid-blue'] + $this->styleInput() + [
-            'color' => ['name' => 'Mid blue', 'images' => [['path' => $this->upload(), 'alt' => 'Wide jeans, front']]],
-        ])->decoded()['data'];
-        $moved = $this->admin('PUT', "/v1/admin/stock/styles/{$listing['id']}", ['status' => 'active', 'name' => 'Test stock baggy jeans', 'slug' => $listing['slug']] + $this->styleInput());
-        self::assertSame('test-stock-baggy-jeans-mid-blue', $moved->decoded()['data']['slug']);
-        self::assertSame('/stock/men/test-stock-baggy-jeans-mid-blue', $this->db->fetchValue('SELECT to_path FROM redirects WHERE from_path = ?', ['/stock/men/test-stock-wide-jeans-mid-blue']));
-
-        // A typed address is used, and stays when the listing is renamed again.
-        $typed = $this->admin('PUT', "/v1/admin/stock/styles/{$copy['id']}", ['name' => 'Test stock straight jeans', 'slug' => 'test-stock-own-address'] + $this->styleInput());
-        self::assertSame('test-stock-own-address', $typed->decoded()['data']['slug']);
-        $kept = $this->admin('PUT', "/v1/admin/stock/styles/{$copy['id']}", ['name' => 'Test stock regular jeans', 'slug' => 'test-stock-own-address'] + $this->styleInput());
-        self::assertSame('test-stock-own-address', $kept->decoded()['data']['slug']);
-    }
-
     public function testRenamingAShownStyleRedirectsItsOldAddress(): void
     {
         $style = $this->admin('POST', '/v1/admin/stock/styles', $this->styleInput())->decoded()['data'];
