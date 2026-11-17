@@ -53,7 +53,7 @@ final class StockApiTest extends IntegrationTestCase
         $this->db->execute("DELETE FROM stock_departments WHERE slug LIKE 'test-%'");
         $this->db->execute("DELETE FROM stock_categories WHERE slug LIKE 'test-%'");
         $this->db->execute("DELETE FROM products WHERE slug LIKE 'test-stock%'");
-        $this->db->execute("DELETE FROM redirects WHERE from_path LIKE '/stock/%/test-stock%'");
+        $this->db->execute("DELETE FROM redirects WHERE from_path LIKE '/stock/%/test-stock%' OR from_path LIKE '/wholesale-shop/%/test-stock%'");
         foreach ([self::EDITOR, self::SALES] as $email) {
             $this->db->execute("DELETE t FROM auth_tokens t JOIN staff_users s ON s.id = t.user_id AND t.user_type = 'staff' WHERE s.email = ?", [$email]);
             $this->db->execute('DELETE FROM staff_users WHERE email = ?', [$email]);
@@ -536,6 +536,66 @@ final class StockApiTest extends IntegrationTestCase
             "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'stock_styles'
              AND CONSTRAINT_NAME IN ('stock_styles_department', 'stock_styles_category') AND CONSTRAINT_TYPE = 'FOREIGN KEY'",
         ));
+    }
+
+    public function testTheStyleNoMigrationEndsExistingAddressesWithIt(): void
+    {
+        $photo = fn (string $folder = 'stock'): array => ['images' => [['path' => $this->upload($folder), 'alt' => 'Test jeans, front']]];
+        $listing = fn (array $input): array => $this->admin('POST', '/v1/admin/stock/styles', $input + $this->styleInput())->decoded()['data'];
+        // Saved before addresses ended with the style no.: a shown listing and its duplicate (same name and style no.),
+        // drafts with a typed address and with their color, one whose address another listing has with the style no.,
+        // one that has it already, and one without a style no.
+        $original = $listing(['style_no' => 'PK-1051', 'color' => ['name' => 'Test indigo'] + $photo()]);
+        $duplicate = $listing(['slug' => 'test-stock-slim-jeans-2', 'style_no' => 'PK-1051', 'color' => ['name' => 'Test black'] + $photo()]);
+        $listing(['slug' => 'test-stock-own-address', 'style_no' => 'PK-9']);
+        $listing(['name' => 'Test stock wide jeans', 'slug' => 'test-stock-wide-jeans-mid-blue', 'style_no' => '77']);
+        $listing(['name' => 'Test stock narrow jeans', 'slug' => 'test-stock-narrow-jeans', 'style_no' => '88']);
+        $listing(['name' => 'Test stock narrow jeans', 'slug' => 'test-stock-narrow-jeans-88', 'style_no' => null]);
+        $listing(['name' => 'Test stock baggy jeans', 'slug' => 'test-stock-baggy-jeans-pk-5', 'style_no' => 'PK-5']);
+        $listing(['name' => 'Test stock loose jeans', 'slug' => 'test-stock-loose-jeans', 'style_no' => null]);
+        $wholesale = $this->admin('POST', '/v1/admin/products', [
+            'name' => 'Test stock wholesale jeans', 'slug' => 'test-stock-wholesale-jeans', 'style_no' => 'WS-1', 'segment' => 'men', 'product_type' => 'jeans-pant',
+            'sizes' => ['30'], 'price_cents' => 650, 'color' => ['name' => 'Rinse'] + $photo('products'),
+        ])->decoded()['data'];
+        self::assertSame(['active', 'active', 'active'], [$original['status'], $duplicate['status'], $wholesale['status']]);
+
+        // The preview in the migration's notes (as staff copy it into phpMyAdmin) lists the changes and changes nothing.
+        $sql = (string) file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0033_style_no_in_web_addresses.sql');
+        self::assertSame(1, preg_match('~preview: copy from the next line -+\R(.+?)\R-+ preview: copy up to the line above~s', $sql, $match));
+        $preview = array_values(array_filter(
+            $this->db->fetchAll($match[1]),
+            static fn (array $row): bool => str_starts_with((string) $row['old_slug'], 'test-stock'),
+        ));
+        $expected = [
+            ['wholesale', 'test-stock-wholesale-jeans', 'test-stock-wholesale-jeans-ws-1'],
+            ['stock', 'test-stock-slim-jeans', 'test-stock-slim-jeans-pk-1051'],
+            ['stock', 'test-stock-slim-jeans-2', 'test-stock-slim-jeans-pk-1051-2'],
+            ['stock', 'test-stock-own-address', 'test-stock-own-address-pk-9'],
+            ['stock', 'test-stock-wide-jeans-mid-blue', 'test-stock-wide-jeans-mid-blue-77'],
+            ['stock', 'test-stock-narrow-jeans', 'test-stock-narrow-jeans-88-2'],
+        ];
+        self::assertSame($expected, array_map(static fn (array $row): array => [$row['shop'], $row['old_slug'], $row['new_slug']], $preview));
+        self::assertSame('test-stock-slim-jeans', $this->db->fetchValue('SELECT slug FROM stock_styles WHERE id = ?', [$original['id']]));
+
+        // Imported twice: the second time there is nothing left to change.
+        $migration = Migrator::split($sql);
+        foreach ([...$migration, ...$migration] as $statement) {
+            $this->db->exec($statement);
+        }
+        $slugs = array_column($this->db->fetchAll("SELECT slug FROM stock_styles WHERE slug LIKE 'test-stock%' UNION ALL SELECT slug FROM products WHERE slug LIKE 'test-stock%'"), 'slug');
+        foreach ($expected as [, $old, $new]) {
+            self::assertContains($new, $slugs);
+            self::assertNotContains($old, $slugs);
+        }
+        self::assertContains('test-stock-baggy-jeans-pk-5', $slugs, 'Has its style no. already');
+        self::assertContains('test-stock-loose-jeans', $slugs, 'No style no.');
+
+        // Shown ones keep their old address working; drafts were not on the website.
+        $redirect = fn (string $from): mixed => $this->db->fetchValue('SELECT to_path FROM redirects WHERE from_path = ?', [$from]);
+        self::assertSame('/stock/men/test-stock-slim-jeans-pk-1051', $redirect('/stock/men/test-stock-slim-jeans'));
+        self::assertSame('/stock/men/test-stock-slim-jeans-pk-1051-2', $redirect('/stock/men/test-stock-slim-jeans-2'));
+        self::assertSame('/wholesale-shop/men/jeans-pant/test-stock-wholesale-jeans-ws-1', $redirect('/wholesale-shop/men/jeans-pant/test-stock-wholesale-jeans'));
+        self::assertNull($redirect('/stock/men/test-stock-own-address'));
     }
 
     public function testRenamingAShownStyleRedirectsItsOldAddress(): void

@@ -48,7 +48,8 @@ All of these run from this folder.
 - **New migrations:** in phpMyAdmin, open the database, then *Import* each new file from `database/migrations`, in number order.
   - If the database has a `schema_migrations` table, record each one on the *SQL* tab, so `bin/migrate.php` never applies it twice: `INSERT IGNORE INTO schema_migrations (version) VALUES ('0025_product_range');` (the file name without `.sql`).
   - Upload the new API files and import their migration together: the new code reads the new columns.
-  - `0026_stock`, `0027_stock_orders`, `0028_single_color_stock`, `0029_stock_piece_price` and `0032_stock_departments_categories` only change what is missing, so importing them again is safe, for example after an import that stopped with an error.
+  - `0026_stock`, `0027_stock_orders`, `0028_single_color_stock`, `0029_stock_piece_price`, `0032_stock_departments_categories` and `0033_style_no_in_web_addresses` only change what is missing, so importing them again is safe, for example after an import that stopped with an error.
+  - `0033_style_no_in_web_addresses` adds the style no. to the end of existing web addresses (`mens-slim-jeans` → `mens-slim-jeans-1051`; shown ones keep their old address as a redirect). Before importing it, run the preview query written at the top of the file on the *SQL* tab: it lists every address that will change and changes nothing. After importing it, redeploy the website.
 - **Refreshing the website's cache:** a new website deployment rebuilds every page from the API, so it shows the new data. Vercel's *Redeploy* does the same when the website code has not changed.
 - **Any other `php bin/…` command** can run from cPanel's *Cron Jobs*: add a job for the next minute, wait for it, then delete it.
 
