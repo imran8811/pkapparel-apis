@@ -163,6 +163,9 @@ final class StockApiTest extends IntegrationTestCase
         // Without a web address, it is made from the name, numbered when another listing (another color) has it.
         $sameName = fn (): string => $this->admin('POST', '/v1/admin/stock/styles', ['name' => 'Test stock boys jeans', 'slug' => null] + $this->styleInput())->decoded()['data']['slug'];
         self::assertSame(['test-stock-boys-jeans-2', 'test-stock-boys-jeans-3'], [$sameName(), $sameName()]);
+        // The style no. ends it (a duplicate has the same, so the number comes after it).
+        $withNumber = fn (): string => $this->admin('POST', '/v1/admin/stock/styles', ['name' => 'Test stock wide jeans', 'style_no' => 'PK-1051', 'slug' => null] + $this->styleInput())->decoded()['data']['slug'];
+        self::assertSame(['test-stock-wide-jeans-pk-1051', 'test-stock-wide-jeans-pk-1051-2'], [$withNumber(), $withNumber()]);
 
         self::assertSame(403, $this->admin('GET', '/v1/admin/stock/styles', null, self::SALES)->status(), 'Editors and admins manage stock');
     }

@@ -188,6 +188,13 @@ final class CatalogApiTest extends IntegrationTestCase
         self::assertSame(404, $this->send('GET', '/v1/products/test-style-denim-jacket')->status());
     }
 
+    public function testAnAddressIsMadeFromTheNameAndStyleNo(): void
+    {
+        $style = $this->admin('POST', '/v1/admin/products', ['slug' => null, 'style_no' => 'TS-1051'] + $this->styleInput());
+        self::assertSame(201, $style->status(), $style->body());
+        self::assertSame('test-style-denim-jacket-ts-1051', $style->decoded()['data']['slug']);
+    }
+
     public function testStyleValidation(): void
     {
         $invalid = $this->admin('POST', '/v1/admin/products', ['name' => 'x', 'segment' => 'pets', 'product_type' => 'hats', 'price_cents' => 0, 'sizes' => []]);

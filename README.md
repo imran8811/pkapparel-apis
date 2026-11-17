@@ -97,6 +97,7 @@ php bin/create-staff.php --name="Your Name" --email=you@example.com --role=admin
   - Never edit one that has been applied anywhere; add a new one.
   - SQL must work on both MySQL 8 and MariaDB 10.4.
 - **Rich text** (posts, pages, shop texts) is cleaned by `App\Core\HtmlSanitizer` before it is stored.
+- **Web addresses** of wholesale styles and stock listings are made from the name, then the style no. (`Text::styleSlug()`, e.g. `men-s-sky-blue-stretch-jeans-1051`; owner request 2026-11-17) when staff leave the address empty; a stock listing's is numbered when another one has it. The admin forms show the same address while the name and style no. are typed (the website's `lib/slug.ts`).
 - **Logins** are random tokens. Only their SHA-256 hash is stored (`auth_tokens`), and login is rate-limited. Staff sessions last 7 days, buyer sessions 30 days.
 - **After each admin change**, `App\Services\WebRevalidator` calls the website's `POST /api/revalidate` with the matching cache tags, so the website shows the change at once.
 

@@ -245,8 +245,9 @@ final class StockStyleController extends AdminController
                 throw new ValidationException(['slug' => 'Another stock style already uses this web address.']);
             }
         } else {
-            // Made from the name, which listings of the same jeans in other colors share (e.g. a duplicate): the first free one.
-            $data['slug'] = $this->freeSlug(Text::slug($data['name']), $id);
+            // Made from the name and style no., which listings of the same jeans in other colors share (e.g. a duplicate):
+            // the first free one.
+            $data['slug'] = $this->freeSlug(Text::styleSlug($data['name'], $data['style_no']), $id);
         }
         $data['description_html'] = $this->sanitizer->sanitize((string) ($data['description_html'] ?? ''));
         $data['category'] ??= $this->defaultCategory($before);

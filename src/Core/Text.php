@@ -7,6 +7,20 @@ namespace App\Core;
 /** Small text helpers shared by the admin and import scripts. */
 final class Text
 {
+    /**
+     * A style's or stock listing's web address: its name, then its style no. (owner request 2026-11-17), e.g. "Men's sky
+     * blue stretch jeans" and "1051" → "men-s-sky-blue-stretch-jeans-1051". Empty without a name. The admin forms make
+     * the same in the browser (the website's lib/slug.ts).
+     */
+    public static function styleSlug(string $name, ?string $styleNo): string
+    {
+        $styleNo = self::slug((string) $styleNo);
+        $tail = $styleNo === '' ? '' : "-{$styleNo}";
+        $slug = self::slug($name, 190 - strlen($tail));
+
+        return $slug === '' ? '' : $slug . $tail;
+    }
+
     /** "Jeans – Men's Guide 2026" → "jeans-men-s-guide-2026" */
     public static function slug(string $text, int $maxLength = 190): string
     {

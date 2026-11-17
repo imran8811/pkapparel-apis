@@ -255,7 +255,8 @@ final class ProductController extends AdminController
         $data['is_featured'] ??= false;
         $data['sort_order'] ??= 0;
 
-        $data['slug'] = ($data['slug'] ?? null) ?: Text::slug($data['name']);
+        // Without one, the address is made from the name and style no.
+        $data['slug'] = ($data['slug'] ?? null) ?: Text::styleSlug($data['name'], $data['style_no']);
         if ($this->products->slugExists($data['slug'], $id)) {
             throw new ValidationException(['slug' => 'Another style already uses this web address.']);
         }
