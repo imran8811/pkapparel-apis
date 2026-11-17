@@ -12,7 +12,9 @@ use App\Core\Response;
 use App\Core\Text;
 use App\Core\ValidationException;
 use App\Core\Validator;
+use App\Models\StockCategory;
 use App\Models\StockColor;
+use App\Models\StockDepartment;
 use App\Models\StockMovement;
 use App\Models\StockStyle;
 use App\Services\ImageStore;
@@ -22,8 +24,8 @@ use App\Services\StockLevels;
 use App\Services\WebRevalidator;
 
 /**
- * Stock styles (admin and editor): ready jeans sold by set. Colors, their photos and their stock are saved by
- * StockColorController.
+ * Stock styles (admin and editor): ready clothes sold by set, each in a department and a category. Colors, their photos
+ * and their stock are saved by StockColorController.
  */
 final class StockStyleController extends AdminController
 {
@@ -31,6 +33,8 @@ final class StockStyleController extends AdminController
         private readonly StockStyle $styles,
         private readonly StockColor $colors,
         private readonly StockMovement $movements,
+        private readonly StockDepartment $departments,
+        private readonly StockCategory $categories,
         private readonly HtmlSanitizer $sanitizer,
         private readonly WebRevalidator $revalidator,
         private readonly Redirects $redirects,
@@ -40,23 +44,28 @@ final class StockStyleController extends AdminController
     ) {
     }
 
-    /** GET /v1/admin/stock/styles?status=active&q=…&page=1 */
+    /** GET /v1/admin/stock/styles?status=active&segment=men&category=jeans&q=…&page=1 */
     public function index(Request $request): Response
     {
         $this->authorize($request, 'editor');
         [$page, $perPage] = $this->pagination($request, 50);
         $filters = Validator::make($request->allQuery(), [
             'status' => 'nullable|in:' . implode(',', StockStyle::STATUSES),
+            'segment' => 'nullable|in:' . implode(',', $this->departments->slugs()),
+            'category' => 'nullable|in:' . implode(',', $this->categories->slugs()),
             'q' => 'nullable|string|max:80',
         ])->validate();
 
-        $result = $this->styles->adminList($filters['status'] ?? null, $filters['q'] ?? null, $page, $perPage);
+        $result = $this->styles->adminList($filters['status'] ?? null, $filters['q'] ?? null, $page, $perPage, $filters['segment'] ?? null, $filters['category'] ?? null);
         $items = array_map(static fn (array $s): array => [
             'id' => $s['id'],
             'slug' => $s['slug'],
             'name' => $s['name'],
             'style_no' => $s['style_no'],
             'segment' => $s['segment'],
+            'category' => $s['category'],
+            'department_name' => $s['department_name'],
+            'category_name' => $s['category_name'],
             'piece_price_cents' => $s['piece_price_cents'],
             'set_price_cents' => $s['set_price_cents'],
             'set_pieces' => $s['set_pieces'],
@@ -119,7 +128,7 @@ final class StockStyleController extends AdminController
         $this->authorize($request, 'editor');
         $id = $this->id($request);
         $before = $this->findOrFail($id);
-        $data = $this->validated($request, $id);
+        $data = $this->validated($request, $before);
 
         if ($data['status'] === 'active' && !$this->hasColorWithPhoto($id)) {
             throw new ValidationException(['status' => 'Add at least one color with a photo before showing this style.']);
@@ -200,15 +209,20 @@ final class StockStyleController extends AdminController
         return false;
     }
 
-    /** @return array<string, mixed> */
-    private function validated(Request $request, ?int $id): array
+    /**
+     * @param array<string, mixed>|null $before the listing being changed, or null for a new one
+     * @return array<string, mixed>
+     */
+    private function validated(Request $request, ?array $before): array
     {
+        $id = $before === null ? null : (int) $before['id'];
         $input = $request->all();
         $data = Validator::make($input, [
             'name' => 'required|string|min:3|max:200',
             'slug' => 'nullable|slug|max:190',
             'style_no' => 'nullable|string|max:40',
-            'segment' => 'required|in:' . implode(',', StockStyle::SEGMENTS),
+            'segment' => 'required|in:' . implode(',', $this->departments->slugs()),
+            'category' => 'nullable|in:' . implode(',', $this->categories->slugs()),
             'specs' => 'nullable|array',
             'description_html' => 'nullable|string|max:200000',
             'set_sizes' => 'required|array|max:20',
@@ -235,7 +249,12 @@ final class StockStyleController extends AdminController
             $data['slug'] = $this->freeSlug(Text::slug($data['name']), $id);
         }
         $data['description_html'] = $this->sanitizer->sanitize((string) ($data['description_html'] ?? ''));
-        $data['specs'] = StockStyle::cleanSpecs($input['specs'] ?? []);
+        $data['category'] ??= $this->defaultCategory($before);
+        $category = $data['category'] === null ? null : $this->categories->findBySlug($data['category']);
+        if ($category === null) {
+            throw new ValidationException(['category' => 'Add a stock category first (Stock categories).']);
+        }
+        $data['specs'] = StockStyle::cleanSpecs($input['specs'] ?? [], (string) $category['product_type']);
         $data['set_sizes'] = StockStyle::cleanSetSizes($input['set_sizes'] ?? []);
 
         return $data;
@@ -271,6 +290,22 @@ final class StockStyleController extends AdminController
             'photos' => $photos,
             'sets' => $data['sets_in_stock'] ?? 0,
         ];
+    }
+
+    /**
+     * The category of a listing saved without one (by a listing form from before categories): the one it has, or for a
+     * new listing the jeans, as every listing was until then.
+     *
+     * @param array<string, mixed>|null $before
+     */
+    private function defaultCategory(?array $before): ?string
+    {
+        if ($before !== null) {
+            return (string) $before['category'];
+        }
+        $category = $this->categories->firstOfType('jeans-pant') ?? ($this->categories->all()[0] ?? null);
+
+        return $category === null ? null : (string) $category['slug'];
     }
 
     /** "mens-slim-jeans", or "mens-slim-jeans-2", "-3"… when another listing has it. */

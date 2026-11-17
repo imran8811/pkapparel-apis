@@ -52,7 +52,7 @@ final class StockToolsController extends AdminController
     {
         $this->authorize($request, 'editor');
 
-        return Response::file(StockListingImport::template(), 'text/csv; charset=utf-8', 'stock-listings-template.csv');
+        return Response::file($this->listingImport->template(), 'text/csv; charset=utf-8', 'stock-listings-template.csv');
     }
 
     /** POST /v1/admin/stock/import-listings {csv, apply}: the listings a file would create; with apply true, creates them. */
@@ -67,7 +67,7 @@ final class StockToolsController extends AdminController
         return Response::data($this->listingImport->import($data['csv'], (bool) ($data['apply'] ?? false), $this->staff($request)['id']));
     }
 
-    /** GET /v1/admin/stock/from-wholesale: the wholesale shop's jeans for men and boys, and what copying each one makes. */
+    /** GET /v1/admin/stock/from-wholesale: the wholesale shop's jeans for men and boys, and the stock jeans listing each color makes. */
     public function wholesale(Request $request): Response
     {
         $this->authorize($request, 'editor');

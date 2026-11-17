@@ -22,9 +22,9 @@ final class StockCatalog
     }
 
     /** @return list<array<string, mixed>> Cards of the active styles, in stock first, then featured and in staff order. */
-    public function listing(?string $segment): array
+    public function listing(?string $segment, ?string $category = null): array
     {
-        $styles = $this->styles->active($segment);
+        $styles = $this->styles->active($segment, $category);
         $colors = $this->colors->forStyles(array_map(static fn (array $s): int => (int) $s['id'], $styles), true, 2);
         $cards = array_map(fn (array $style): array => $this->card($style, $colors[$style['id']] ?? []), $styles);
         // usort is stable, so styles keep their order within "in stock" and "sold out".
@@ -44,18 +44,26 @@ final class StockCatalog
         if ($colors === []) {
             return null;
         }
-        $related = array_values(array_filter($this->listing($style['segment']), static fn (array $card): bool => $card['slug'] !== $style['slug']));
+        // Others of its department: those of its category first.
+        $others = array_values(array_filter($this->listing($style['segment']), static fn (array $card): bool => $card['slug'] !== $style['slug']));
+        $related = [
+            ...array_filter($others, static fn (array $card): bool => $card['category'] === $style['category']),
+            ...array_filter($others, static fn (array $card): bool => $card['category'] !== $style['category']),
+        ];
 
         return [
             'slug' => $style['slug'],
             'name' => $style['name'],
             'style_no' => $style['style_no'],
             'segment' => $style['segment'],
+            'category' => $style['category'],
+            'department_name' => $style['department_name'],
+            'category_name' => $style['category_name'],
             'specs' => self::specValues($style),
-            // Labeled and in display order, as for the wholesale shop's jeans ("Inseam" for length…), then the label.
+            // Labeled and in display order, as for the wholesale shop's product type ("Inseam" for length…), then the label.
             'spec_fields' => array_map(
                 static fn (array $field): array => ['key' => $field['key'], 'label' => $field['label']],
-                StockStyle::specFields(),
+                StockStyle::specFields($style['product_type']),
             ),
             'description_html' => (string) $style['description_html'],
             'set' => ['sizes' => $style['set_sizes'], 'pieces' => $style['set_pieces']],
@@ -80,7 +88,8 @@ final class StockCatalog
     }
 
     /**
-     * The style's values for its specs (the jeans specs and the label), in display order (null when not set).
+     * The style's values for its specs (those of its category's product type, and the label), in display order (null
+     * when not set).
      *
      * @param array<string, mixed> $style decoded stock_styles row
      * @return array<string, ?string>
@@ -88,7 +97,7 @@ final class StockCatalog
     public static function specValues(array $style): array
     {
         $values = [];
-        foreach (array_column(StockStyle::specFields(), 'key') as $key) {
+        foreach (array_column(StockStyle::specFields((string) $style['product_type']), 'key') as $key) {
             $value = $style['specs'][$key] ?? null;
             $values[$key] = $value === null || $value === '' ? null : (string) $value;
         }
@@ -108,6 +117,9 @@ final class StockCatalog
             'name' => $style['name'],
             'style_no' => $style['style_no'],
             'segment' => $style['segment'],
+            'category' => $style['category'],
+            'department_name' => $style['department_name'],
+            'category_name' => $style['category_name'],
             'fit' => $style['specs']['fit'] ?? null,
             'stretch' => $style['specs']['stretch'] ?? null,
             'sizes' => array_column($style['set_sizes'], 'size'),

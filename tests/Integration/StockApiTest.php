@@ -12,7 +12,7 @@ use App\Models\StaffUser;
 use App\Models\StockColor;
 use App\Services\ImageStore;
 
-/** Stock: ready jeans sold by set, the stock pages' endpoints and the stock admin. */
+/** Stock: ready clothes sold by set, by department and category; the stock pages' endpoints and the stock admin. */
 final class StockApiTest extends IntegrationTestCase
 {
     private const TEST_IP = '192.0.2.81';
@@ -50,6 +50,8 @@ final class StockApiTest extends IntegrationTestCase
     private function cleanUp(): void
     {
         $this->db->execute("DELETE FROM stock_styles WHERE slug LIKE 'test-stock%'");
+        $this->db->execute("DELETE FROM stock_departments WHERE slug LIKE 'test-%'");
+        $this->db->execute("DELETE FROM stock_categories WHERE slug LIKE 'test-%'");
         $this->db->execute("DELETE FROM products WHERE slug LIKE 'test-stock%'");
         $this->db->execute("DELETE FROM redirects WHERE from_path LIKE '/stock/%/test-stock%'");
         foreach ([self::EDITOR, self::SALES] as $email) {
@@ -91,6 +93,7 @@ final class StockApiTest extends IntegrationTestCase
 
         $cards = $this->send('GET', '/v1/stock/styles', ['segment' => 'men'])->decoded()['data'];
         $card = $this->card($cards, 'test-stock-slim-jeans');
+        self::assertSame(['men', 'jeans', 'Men', 'Jeans'], [$card['segment'], $card['category'], $card['department_name'], $card['category_name']]);
         self::assertSame(['28', '30', '32', '34'], $card['sizes']);
         self::assertSame([200000, 1200000], [$card['piece_price_cents'], $card['set_price_cents']]);
         self::assertSame(12, $card['sets_in_stock']);
@@ -99,7 +102,8 @@ final class StockApiTest extends IntegrationTestCase
             $this->send('GET', '/v1/stock/styles', ['segment' => 'boys'])->decoded()['data'],
             static fn (array $c): bool => $c['slug'] === 'test-stock-slim-jeans',
         ), 'Men\'s styles are not on the boys\' page');
-        self::assertSame(422, $this->send('GET', '/v1/stock/styles', ['segment' => 'women'])->status(), 'Stock is men and boys only');
+        self::assertSame(422, $this->send('GET', '/v1/stock/styles', ['segment' => 'girls'])->status(), 'Only the stock departments');
+        self::assertSame(200, $this->send('GET', '/v1/stock/styles', ['segment' => 'women', 'category' => 'cotton-pants'])->status());
 
         $page = $this->send('GET', '/v1/stock/styles/test-stock-slim-jeans')->decoded()['data'];
         self::assertSame(6, $page['set']['pieces']);
@@ -144,7 +148,8 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame(422, $sizes([['size' => 'XL', 'pcs' => 1]]));
         self::assertSame(422, $sizes([['size' => '30', 'pcs' => 0]]));
         self::assertSame(422, $sizes([['size' => '30', 'pcs' => 1], ['size' => '30', 'pcs' => 1]]), 'Each size once');
-        self::assertSame(422, $this->admin('POST', '/v1/admin/stock/styles', ['segment' => 'women'] + $this->styleInput())->status(), 'Men and boys only');
+        self::assertSame(422, $this->admin('POST', '/v1/admin/stock/styles', ['segment' => 'girls'] + $this->styleInput())->status(), 'Only the stock departments');
+        self::assertSame(422, $this->admin('POST', '/v1/admin/stock/styles', ['category' => 'shirts'] + $this->styleInput())->status(), 'Only the stock categories');
 
         $boys = $this->admin('POST', '/v1/admin/stock/styles', [
             'name' => 'Test stock boys jeans', 'slug' => 'test-stock-boys-jeans', 'segment' => 'boys', 'piece_price_cents' => 150000,
@@ -222,8 +227,8 @@ final class StockApiTest extends IntegrationTestCase
 
         $export = $this->admin('GET', '/v1/admin/stock/export');
         self::assertSame(200, $export->status());
-        self::assertStringStartsWith("\xEF\xBB\xBFStyle no.,Style,For,Color code,Color,Sets in stock", $export->body());
-        self::assertStringContainsString('TEST-ST-A,"Test indigo",10,6,2000,12000,No', $export->body(), 'A draft style is not shown');
+        self::assertStringStartsWith("\xEF\xBB\xBF\"Style no.\",Style,For,Category,\"Color code\",Color,\"Sets in stock\"", $export->body());
+        self::assertStringContainsString('Men,Jeans,TEST-ST-A,"Test indigo",10,6,2000,12000,No', $export->body(), 'A draft style is not shown');
 
         // Excel in some languages saves with semicolons; problems are listed and nothing changes.
         $bad = $this->admin('POST', '/v1/admin/stock/import', ['csv' => "Color code;Sets in stock\nTEST-ST-A;7\nTEST-NOPE;1\nTEST-ST-B;lots\n", 'apply' => true])->decoded()['data'];
@@ -244,6 +249,7 @@ final class StockApiTest extends IntegrationTestCase
         $report = $this->admin('GET', '/v1/admin/stock/report', ['days' => 7], self::SALES)->decoded()['data'];
         $row = array_values(array_filter($report['rows'], static fn (array $r): bool => $r['code'] === 'TEST-ST-B'))[0];
         self::assertSame([2, 2, 2 * 1200000, 4], [$row['sets_in_stock'], $row['sold_sets'], $row['value_cents'], $row['received_sets']]);
+        self::assertSame(['Men', 'Jeans'], [$row['department_name'], $row['category_name']]);
         self::assertSame(403, $this->admin('GET', '/v1/admin/stock/export', null, self::SALES)->status(), 'Sales staff read the report only');
     }
 
@@ -251,14 +257,14 @@ final class StockApiTest extends IntegrationTestCase
     {
         $template = $this->admin('GET', '/v1/admin/stock/import-listings/template');
         self::assertSame(200, $template->status());
-        self::assertStringStartsWith("\xEF\xBB\xBFName,Style no.,For,Color,Color code", $template->body());
+        self::assertStringStartsWith("\xEF\xBB\xBFName,\"Style no.\",For,Category,Color,\"Color code\"", $template->body());
 
-        $csv = "Name;For;Color;Color code;Set;Price per piece (Rs);Sets in stock;Fit;Label\n"
-            . "Test stock import slim;Men;Black;TEST-IMP-1;28x1, 30x2;980;5;Slim;Own label\n"
-            . "Test stock import straight;Boys;Mid blue;TEST-IMP-2;16x2 18x2;650;;Straight;\n";
+        $csv = "Name;For;Category;Color;Color code;Set;Price per piece (Rs);Sets in stock;Fit;Finish;Label\n"
+            . "Test stock import slim;Men;Jeans;Black;TEST-IMP-1;28x1, 30x2;980;5;Slim;;Own label\n"
+            . "Test stock import straight;Boys;Cotton pant;Mid blue;TEST-IMP-2;16x2 18x2;650;;Straight;Peach finish;\n";
 
         // A file with a problem creates nothing, and names the line.
-        $bad = $this->admin('POST', '/v1/admin/stock/import-listings', ['csv' => $csv . "Test stock import wide;Men;Grey;TEST-IMP-1;30x1;700;;;\n", 'apply' => true])->decoded()['data'];
+        $bad = $this->admin('POST', '/v1/admin/stock/import-listings', ['csv' => $csv . "Test stock import wide;Men;Jeans;Grey;TEST-IMP-1;30x1;700;;;;\n", 'apply' => true])->decoded()['data'];
         self::assertFalse($bad['applied']);
         self::assertSame([['line' => 4, 'message' => 'The code “TEST-IMP-1” is also on line 2.']], $bad['errors']);
         self::assertNull($this->db->fetchValue("SELECT id FROM stock_styles WHERE slug = 'test-stock-import-slim-black'"));
@@ -274,7 +280,9 @@ final class StockApiTest extends IntegrationTestCase
         $style = $this->admin('GET', "/v1/admin/stock/styles/{$applied['listings'][0]['id']}")->decoded()['data'];
         self::assertSame(['test-stock-import-slim-black', 'draft', 'Slim', 'Own label', 5], [$style['slug'], $style['status'], $style['specs']['fit'], $style['specs']['label'], $style['sets_in_stock']]);
         self::assertSame('Stock when the listing was imported', $this->admin('GET', '/v1/admin/stock/movements', ['style_id' => $style['id']])->decoded()['data'][0]['note']);
-        self::assertSame('boys', $this->admin('GET', "/v1/admin/stock/styles/{$applied['listings'][1]['id']}")->decoded()['data']['segment']);
+        $boys = $this->admin('GET', "/v1/admin/stock/styles/{$applied['listings'][1]['id']}")->decoded()['data'];
+        self::assertSame(['boys', 'cotton-pants', 'Peach finish'], [$boys['segment'], $boys['category'], $boys['specs']['wash']], 'The Finish of cotton pants');
+        self::assertSame(['Boys', 'Cotton pants'], [$applied['listings'][1]['department_name'], $applied['listings'][1]['category_name']]);
 
         // The same file again creates nothing twice: each line's code, and its name and color, are taken.
         $again = $this->admin('POST', '/v1/admin/stock/import-listings', ['csv' => $csv, 'apply' => true])->decoded()['data'];
@@ -322,6 +330,7 @@ final class StockApiTest extends IntegrationTestCase
             [null, null, true, 'men', 'Rinse', 'TEST-SW-1', 'test-stock-straight-jeans-rinse', 1],
             [$row['stock_style_id'], $row['problem'], $row['shown'], $row['segment'], $row['color'], $row['code'], $row['slug'], $row['photos']],
         );
+        self::assertSame(['jeans', 'Men', 'Jeans'], [$row['category'], $row['department_name'], $row['category_name']], 'Copied into the stock jeans');
         self::assertSame('test-stock-straight-jeans-black', $this->wholesaleRow($blackId)['slug']);
         self::assertSame(['30', '32', '34', '36'], array_column($row['set_sizes'], 'size'));
         self::assertSame([2, 2, 2, 2], array_column($row['set_sizes'], 'pcs'), 'The wholesale set: 2 pieces per size');
@@ -343,6 +352,7 @@ final class StockApiTest extends IntegrationTestCase
             'Shown, without a price',
         );
         self::assertSame([['TEST-SW-1', 'Rinse', 0]], array_map(static fn (array $c): array => [$c['code'], $c['name'], $c['sets_in_stock']], $listing['colors']), 'One color');
+        self::assertSame('jeans', $listing['category']);
         self::assertSame(['fit' => 'Straight', 'rise' => 'Mid rise', 'stretch' => 'non-stretch'], array_filter($listing['specs']));
         self::assertSame('Black wash', $blackListing['specs']['wash'], 'A color keeps its own fabric details');
         self::assertSame('<p>Five-pocket straight jeans in rigid denim.</p><ul><li>Five-pocket styling</li></ul>', $listing['description_html']);
@@ -419,6 +429,112 @@ final class StockApiTest extends IntegrationTestCase
         self::fail("Wholesale color {$colorId} is not listed");
     }
 
+    public function testStaffKeepTheDepartmentsAndCategories(): void
+    {
+        $departments = $this->admin('GET', '/v1/admin/stock/departments')->decoded()['data'];
+        self::assertSame(['men', 'women', 'boys'], array_slice(array_column($departments, 'slug'), 0, 3), 'Men first: it is listed at /stock itself');
+        self::assertIsInt($departments[0]['styles']);
+        self::assertSame(['Jeans', 'Cotton pants'], array_slice(array_column($this->admin('GET', '/v1/admin/stock/categories')->decoded()['data'], 'name'), 0, 2));
+
+        // A new department: its web address is made from the name, and never changes.
+        $added = $this->admin('POST', '/v1/admin/stock/departments', ['name' => 'Test girls']);
+        self::assertSame(201, $added->status(), (string) $added->body());
+        $girls = $added->decoded()['data'];
+        self::assertSame(['test-girls', 0], [$girls['slug'], $girls['styles']]);
+        self::assertGreaterThan(30, $girls['sort_order'], 'Added at the end');
+        $renamed = $this->admin('PUT', "/v1/admin/stock/departments/{$girls['id']}", ['name' => 'Test girls and kids', 'slug' => 'test-kids', 'sort_order' => 25]);
+        self::assertSame(['Test girls and kids', 'test-girls', 25], [$renamed->decoded()['data']['name'], $renamed->decoded()['data']['slug'], $renamed->decoded()['data']['sort_order']]);
+
+        $refused = fn (array $input): array => $this->admin('POST', '/v1/admin/stock/departments', $input)->decoded()['error']['fields'] ?? [];
+        self::assertSame(['name' => 'Another department is called test GIRLS and kids.'], $refused(['name' => 'test GIRLS and kids']));
+        self::assertSame(['slug' => '/stock/cart is one of the stock pages: choose another web address.'], $refused(['name' => 'Test cart', 'slug' => 'cart']));
+        self::assertSame(['name' => '/stock/login is one of the stock pages: choose another web address.'], $refused(['name' => 'Login']));
+        self::assertSame(['slug' => 'Another department has the web address “test-girls”.'], $refused(['name' => 'Test girls 2', 'slug' => 'test-girls']));
+
+        // A category has the specs of a wholesale product type sold in waist sizes.
+        $shorts = $this->admin('POST', '/v1/admin/stock/categories', ['name' => 'Test shorts', 'product_type' => 'jeans-short']);
+        self::assertSame(201, $shorts->status(), (string) $shorts->body());
+        $shorts = $shorts->decoded()['data'];
+        self::assertSame(['test-shorts', 'jeans-short'], [$shorts['slug'], $shorts['product_type']]);
+        self::assertArrayHasKey('product_type', $this->admin('POST', '/v1/admin/stock/categories', ['name' => 'Test tees', 'product_type' => 't-shirt'])->decoded()['error']['fields'], 'T-shirts have letter sizes');
+
+        // On the stock pages' menus, in staff order.
+        $sections = $this->send('GET', '/v1/stock/sections')->decoded()['data'];
+        self::assertSame(['slug' => 'test-girls', 'name' => 'Test girls and kids'], $sections['departments'][array_search('test-girls', array_column($sections['departments'], 'slug'), true)]);
+        self::assertSame(['slug' => 'men', 'name' => 'Men'], $sections['departments'][0]);
+        self::assertContains(['slug' => 'test-shorts', 'name' => 'Test shorts'], $sections['categories']);
+
+        // One with listings cannot be deleted.
+        $listing = $this->admin('POST', '/v1/admin/stock/styles', ['segment' => 'test-girls', 'category' => 'test-shorts', 'specs' => ['length' => '5 in']] + $this->styleInput());
+        self::assertSame(201, $listing->status(), (string) $listing->body());
+        self::assertSame(['test-girls', 'test-shorts', '5 in'], [$listing->decoded()['data']['segment'], $listing->decoded()['data']['category'], $listing->decoded()['data']['specs']['length']]);
+        $inUse = $this->admin('DELETE', "/v1/admin/stock/departments/{$girls['id']}");
+        self::assertSame([409, 'Test girls and kids has 1 stock listing. Move it to another department first.'], [$inUse->status(), $inUse->decoded()['error']['message']]);
+        self::assertSame(409, $this->admin('DELETE', "/v1/admin/stock/categories/{$shorts['id']}")->status());
+        $counts = array_column($this->admin('GET', '/v1/admin/stock/departments')->decoded()['data'], 'styles', 'slug');
+        self::assertSame(1, $counts['test-girls'], 'The list shows how many listings each one has');
+
+        $this->admin('DELETE', "/v1/admin/stock/styles/{$listing->decoded()['data']['id']}");
+        self::assertSame(204, $this->admin('DELETE', "/v1/admin/stock/categories/{$shorts['id']}")->status());
+        self::assertSame(204, $this->admin('DELETE', "/v1/admin/stock/departments/{$girls['id']}")->status());
+        self::assertSame(404, $this->admin('PUT', "/v1/admin/stock/departments/{$girls['id']}", ['name' => 'Gone'])->status());
+
+        // The men's are the stock home page, so they stay.
+        $menId = $departments[0]['id'];
+        self::assertSame(409, $this->admin('DELETE', "/v1/admin/stock/departments/{$menId}")->status());
+        self::assertSame(403, $this->admin('GET', '/v1/admin/stock/departments', null, self::SALES)->status(), 'Editors and admins only');
+    }
+
+    public function testCottonPantsHaveTheirOwnDetailsAndAreFilteredByCategory(): void
+    {
+        $input = ['name' => 'Test stock cotton pants', 'slug' => 'test-stock-cotton-pants', 'category' => 'cotton-pants',
+            'specs' => ['fit' => 'Slim', 'wash' => 'Peach finish', 'pockets' => 'ignored']] + $this->styleInput();
+        $style = $this->admin('POST', '/v1/admin/stock/styles', $input + ['color' => [
+            'name' => 'Test khaki', 'images' => [['path' => $this->upload(), 'alt' => 'Khaki cotton pants, front']],
+        ]])->decoded()['data'];
+        self::assertSame(['active', 'cotton-pants', 'Cotton pants', 'chino-pant'], [$style['status'], $style['category'], $style['category_name'], $style['product_type']]);
+        self::assertSame('Peach finish', $style['specs']['wash']);
+        self::assertArrayNotHasKey('pockets', $style['specs'], 'Only the specs of chino pants, then the label');
+
+        $page = $this->send('GET', '/v1/stock/styles/test-stock-cotton-pants')->decoded()['data'];
+        self::assertSame('Finish', array_column($page['spec_fields'], 'label', 'key')['wash'], 'Cotton pants have a finish, not a wash');
+        self::assertSame(['men', 'cotton-pants', 'Men', 'Cotton pants'], [$page['segment'], $page['category'], $page['department_name'], $page['category_name']]);
+
+        $slugs = fn (array $query): array => array_column($this->send('GET', '/v1/stock/styles', $query)->decoded()['data'], 'slug');
+        self::assertContains('test-stock-cotton-pants', $slugs(['segment' => 'men', 'category' => 'cotton-pants']));
+        self::assertNotContains('test-stock-cotton-pants', $slugs(['segment' => 'men', 'category' => 'jeans']));
+        self::assertSame(422, $this->send('GET', '/v1/stock/styles', ['category' => 'shirts'])->status());
+        $admin = fn (array $query): array => array_column($this->admin('GET', '/v1/admin/stock/styles', $query)->decoded()['data'], 'slug');
+        self::assertContains('test-stock-cotton-pants', $admin(['category' => 'cotton-pants', 'segment' => 'men']));
+        self::assertNotContains('test-stock-cotton-pants', $admin(['category' => 'jeans']));
+
+        // A form from before categories sends none: the listing keeps its own, and a new one is jeans.
+        $kept = $this->admin('PUT', "/v1/admin/stock/styles/{$style['id']}", array_diff_key(['status' => 'active'] + $input, ['category' => true]))->decoded()['data'];
+        self::assertSame('cotton-pants', $kept['category']);
+        $new = $this->admin('POST', '/v1/admin/stock/styles', ['slug' => 'test-stock-no-category'] + array_diff_key($this->styleInput(), ['category' => true]));
+        self::assertSame('jeans', $new->decoded()['data']['category']);
+
+        // Moved to the boys' department, its old address leads to the new one.
+        $moved = $this->admin('PUT', "/v1/admin/stock/styles/{$style['id']}", ['status' => 'active', 'segment' => 'boys'] + $input);
+        self::assertSame(200, $moved->status(), (string) $moved->body());
+        self::assertSame('/stock/boys/test-stock-cotton-pants', $this->db->fetchValue('SELECT to_path FROM redirects WHERE from_path = ?', ['/stock/men/test-stock-cotton-pants']));
+    }
+
+    public function testTheDepartmentsAndCategoriesMigrationIsSafeToImportAgain(): void
+    {
+        $migration = Migrator::split((string) file_get_contents(dirname(__DIR__, 2) . '/database/migrations/0032_stock_departments_categories.sql'));
+        foreach ([...$migration, ...$migration] as $statement) {
+            $this->db->exec($statement);
+        }
+
+        self::assertSame(['men', 'women', 'boys'], array_column($this->db->fetchAll("SELECT slug FROM stock_departments WHERE slug IN ('men', 'women', 'boys') ORDER BY sort_order"), 'slug'));
+        self::assertSame(1, (int) $this->db->fetchValue("SELECT COUNT(*) FROM stock_categories WHERE slug = 'cotton-pants'"));
+        self::assertSame(2, (int) $this->db->fetchValue(
+            "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'stock_styles'
+             AND CONSTRAINT_NAME IN ('stock_styles_department', 'stock_styles_category') AND CONSTRAINT_TYPE = 'FOREIGN KEY'",
+        ));
+    }
+
     public function testRenamingAShownStyleRedirectsItsOldAddress(): void
     {
         $style = $this->admin('POST', '/v1/admin/stock/styles', $this->styleInput())->decoded()['data'];
@@ -440,6 +556,7 @@ final class StockApiTest extends IntegrationTestCase
             'name' => 'Test stock slim jeans',
             'slug' => 'test-stock-slim-jeans',
             'segment' => 'men',
+            'category' => 'jeans',
             'specs' => ['fit' => 'Slim', 'stretch' => 'stretch', 'wash' => 'Stone wash', 'label' => ' Test label ', 'neckline' => 'ignored'],
             'set_sizes' => [['size' => '32', 'pcs' => 2], ['size' => '28', 'pcs' => 1], ['size' => '34', 'pcs' => 1], ['size' => '30', 'pcs' => 2]],
             'piece_price_cents' => 200000,

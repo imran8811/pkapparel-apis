@@ -12,7 +12,6 @@ use App\Models\Cart;
 use App\Models\CustomerAddress;
 use App\Models\Order;
 use App\Models\StockColor;
-use App\Models\StockStyle;
 use PDOException;
 use Throwable;
 
@@ -198,7 +197,7 @@ final class StockOrders
                 'style_name' => $line['style']['name'],
                 'style_slug' => $line['style']['slug'],
                 'segment' => $line['style']['segment'],
-                'product_type' => StockStyle::PRODUCT_TYPE,
+                'product_type' => $line['style']['product_type'],
                 'color_code' => $line['code'],
                 'color_name' => $line['name'],
                 'color_hex' => $line['hex'],

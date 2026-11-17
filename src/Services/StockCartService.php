@@ -95,7 +95,15 @@ final class StockCartService
                 'slug' => $color['slug'],
                 'hex' => $color['hex'],
                 'image' => $images[$color['id']] ?? null,
-                'style' => ['slug' => $style['slug'], 'name' => $style['name'], 'style_no' => $style['style_no'], 'segment' => $style['segment']],
+                'style' => [
+                    'slug' => $style['slug'],
+                    'name' => $style['name'],
+                    'style_no' => $style['style_no'],
+                    'segment' => $style['segment'],
+                    'category' => $style['category'],
+                    // Its category's product type: what the order line records.
+                    'product_type' => $style['product_type'],
+                ],
                 'set' => ['sizes' => $style['set_sizes'], 'pieces' => $style['set_pieces']],
                 'piece_price_cents' => $style['piece_price_cents'],
                 'set_price_cents' => $style['set_price_cents'],

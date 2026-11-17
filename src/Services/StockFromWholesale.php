@@ -9,7 +9,9 @@ use App\Core\HtmlSanitizer;
 use App\Models\Product;
 use App\Models\ProductColor;
 use App\Models\ProductTypes;
+use App\Models\StockCategory;
 use App\Models\StockColor;
+use App\Models\StockDepartment;
 use App\Models\StockStyle;
 use DOMDocument;
 use DOMElement;
@@ -17,10 +19,11 @@ use Throwable;
 
 /**
  * Copies the wholesale shop's jeans for men (and for boys, should it have any) into the stock (owner requests
- * 2026-11-09). Every stock listing is one color with its own details, so each wholesale color becomes a listing of
- * its own, at {style}-{color}: the style's name, style no., specs (with the color's own fabric details), the set (the
- * wholesale waist sizes with the wholesale set's pieces per size), the color and its photos. From then on a copy is
- * separate from the wholesale style: its photos are copied files, and neither shop changes the other.
+ * 2026-11-09): into the men's or boys' department, in the first stock category with the specs of jeans pants (Jeans).
+ * Every stock listing is one color with its own details, so each wholesale color becomes a listing of its own, at
+ * {style}-{color}: the style's name, style no., specs (with the color's own fabric details), the set (the wholesale
+ * waist sizes with the wholesale set's pieces per size), the color and its photos. From then on a copy is separate from
+ * the wholesale style: its photos are copied files, and neither shop changes the other.
  *
  * A copy is shown on the stock pages straight away when the wholesale style and color are shown and the color has a
  * photo. It has no price ("Price on request", and it cannot be ordered online until staff enter one) and no sets in
@@ -31,6 +34,9 @@ use Throwable;
  */
 final class StockFromWholesale
 {
+    /** The wholesale product type that is copied. */
+    public const PRODUCT_TYPE = 'jeans-pant';
+
     /** Text about the wholesale business, which the stock pages must not show. */
     private const WHOLESALE_WORDING = '/pakistan|wholesale|export|made[ -]to[ -]order|minimum order|\bmoq\b|pieces per colou?r|from \d+ pieces|private[ -]label|own (?:brand )?labels?|packaging|lead time|deposit|\bship(?:s|ped|ping)?\b|by air|by sea|freight|forwarder|tech pack|\bquotes?\b|\bsamples?\b/i';
 
@@ -41,6 +47,8 @@ final class StockFromWholesale
         private readonly Catalog $catalog,
         private readonly StockStyle $styles,
         private readonly StockColor $colors,
+        private readonly StockDepartment $departments,
+        private readonly StockCategory $categories,
         private readonly ImageStore $images,
         private readonly HtmlSanitizer $sanitizer,
     ) {
@@ -90,7 +98,7 @@ final class StockFromWholesale
             return [];
         }
         $where = "p.product_type = ? AND p.segment IN ('men', 'boys') AND p.status <> 'archived'";
-        $params = [StockStyle::PRODUCT_TYPE];
+        $params = [self::PRODUCT_TYPE];
         if ($colorIds !== null) {
             $where .= ' AND c.id IN (' . implode(', ', array_fill(0, count($colorIds), '?')) . ')';
             array_push($params, ...$colorIds);
@@ -108,6 +116,11 @@ final class StockFromWholesale
             }
         }
 
+        // Where the copies go: the stock's jeans category and the departments (by slug).
+        $target = [
+            'category' => $this->categories->firstOfType(self::PRODUCT_TYPE),
+            'departments' => array_column($this->departments->all(), 'name', 'slug'),
+        ];
         $plans = [];
         $shared = [];
         foreach ($rows as $row) {
@@ -119,7 +132,7 @@ final class StockFromWholesale
                     + array_combine(['description', 'left_out'], $this->description((string) $product['description_html'], $product['features']));
             }
             if ($color !== null && $shared[$productId] !== null) {
-                $plans[] = $this->plan($shared[$productId], $color);
+                $plans[] = $this->plan($shared[$productId], $color, $target);
             }
         }
 
@@ -130,12 +143,15 @@ final class StockFromWholesale
      * @param array{product: array<string, mixed>, sizes: list<array{size: string, pcs: int}>, description: string, left_out: list<string>} $shared
      *        the wholesale style (decoded products row) and what all its colors share
      * @param array<string, mixed> $color one of its colors, with its photos
+     * @param array{category: array<string, mixed>|null, departments: array<string, string>} $target the stock's jeans
+     *        category and its departments' names by slug
      * @return array<string, mixed>
      */
-    private function plan(array $shared, array $color): array
+    private function plan(array $shared, array $color, array $target): array
     {
         $product = $shared['product'];
         $name = (string) $product['name'];
+        $segment = $product['segment'] === 'boys' || preg_match('/\bboys?\b/i', $name) === 1 ? 'boys' : 'men';
         $slug = self::slug((string) $product['slug'], (string) $color['slug']);
         // In the stock already: a stock color with this code (made by hand or copied), or a listing at this address.
         $existing = $this->db->fetch(
@@ -172,14 +188,20 @@ final class StockFromWholesale
                 !$color['is_active'] => 'This color is hidden in the wholesale shop.',
                 default => 'It has no photos.',
             },
-            'problem' => $stockStyleId === null && $shared['sizes'] === []
-                ? sprintf('Its sizes are not waist sizes from %d to %d.', StockStyle::SIZE_MIN, StockStyle::SIZE_MAX)
-                : null,
+            'problem' => $stockStyleId !== null ? null : match (true) {
+                $shared['sizes'] === [] => sprintf('Its sizes are not waist sizes from %d to %d.', StockStyle::SIZE_MIN, StockStyle::SIZE_MAX),
+                $target['category'] === null => 'The stock has no category with the details of jeans pants: add one under Stock categories.',
+                !isset($target['departments'][$segment]) => "The stock has no “{$segment}” department: add it under Stock categories.",
+                default => null,
+            },
+            'department_name' => $target['departments'][$segment] ?? $segment,
+            'category_name' => $target['category']['name'] ?? null,
             'style' => [
                 'slug' => $slug,
                 'name' => $name,
                 'style_no' => $product['style_no'],
-                'segment' => $product['segment'] === 'boys' || preg_match('/\bboys?\b/i', $name) === 1 ? 'boys' : 'men',
+                'segment' => $segment,
+                'category' => $target['category']['slug'] ?? null,
                 'specs' => self::specs($product, $color['spec_overrides']),
                 'description_html' => $shared['description'],
                 'set_sizes' => $shared['sizes'],
@@ -216,6 +238,9 @@ final class StockFromWholesale
             'style_no' => $plan['product']['style_no'],
             'wholesale_status' => $plan['product']['status'],
             'segment' => $plan['style']['segment'],
+            'category' => $plan['style']['category'],
+            'department_name' => $plan['department_name'],
+            'category_name' => $plan['category_name'],
             'set_sizes' => $plan['style']['set_sizes'],
             'photos' => count($plan['photos']),
             'thumbnail' => $plan['photos'][0]['path'] ?? null,

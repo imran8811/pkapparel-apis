@@ -24,7 +24,7 @@ final class StockCounts
 
     private const MAX_ERRORS = 50;
 
-    private const HEADERS = ['Style no.', 'Style', 'For', 'Color code', 'Color', 'Sets in stock', 'Pieces per set', 'Price per piece (Rs)', 'Price per set (Rs)', 'Shown'];
+    private const HEADERS = ['Style no.', 'Style', 'For', 'Category', 'Color code', 'Color', 'Sets in stock', 'Pieces per set', 'Price per piece (Rs)', 'Price per set (Rs)', 'Shown'];
 
     public function __construct(
         private readonly Database $db,
@@ -37,9 +37,12 @@ final class StockCounts
     public function export(): string
     {
         $rows = $this->db->fetchAll(
-            'SELECT s.style_no, s.name AS style_name, s.segment, s.status, s.set_sizes, s.piece_price_cents, s.set_price_cents, c.code, c.name, c.is_active, c.sets_in_stock
+            'SELECT s.style_no, s.name AS style_name, s.segment, s.category, d.name AS department_name, k.name AS category_name, s.status, s.set_sizes,
+                s.piece_price_cents, s.set_price_cents, c.code, c.name, c.is_active, c.sets_in_stock
              FROM stock_colors c JOIN stock_styles s ON s.id = c.style_id
-             ORDER BY s.segment, s.sort_order, s.id, c.sort_order, c.id',
+             LEFT JOIN stock_departments d ON d.slug = s.segment
+             LEFT JOIN stock_categories k ON k.slug = s.category
+             ORDER BY d.sort_order, s.segment, k.sort_order, s.category, s.sort_order, s.id, c.sort_order, c.id',
         );
         $out = fopen('php://temp', 'r+');
         fwrite($out, "\xEF\xBB\xBF");
@@ -50,7 +53,8 @@ final class StockCounts
             fputcsv($out, [
                 (string) ($row['style_no'] ?? ''),
                 (string) $row['style_name'],
-                $row['segment'] === 'boys' ? 'Boys' : 'Men',
+                (string) ($row['department_name'] ?? $row['segment']),
+                (string) ($row['category_name'] ?? $row['category']),
                 (string) $row['code'],
                 (string) $row['name'],
                 (int) $row['sets_in_stock'],
@@ -169,16 +173,19 @@ final class StockCounts
     {
         $since = gmdate('Y-m-d H:i:s', time() - $days * 86400);
         $rows = $this->db->fetchAll(
-            "SELECT s.id AS style_id, s.name AS style_name, s.style_no, s.segment, s.status, s.set_price_cents,
-                c.id AS color_id, c.code, c.name, c.is_active, c.sets_in_stock,
+            "SELECT s.id AS style_id, s.name AS style_name, s.style_no, s.segment, s.category, d.name AS department_name, k.name AS category_name,
+                s.status, s.set_price_cents, c.id AS color_id, c.code, c.name, c.is_active, c.sets_in_stock,
                 COALESCE(SUM(CASE WHEN m.reason IN ('sold', 'cancelled') THEN -m.change_sets END), 0) AS sold_sets,
                 COALESCE(SUM(CASE WHEN m.reason = 'received' THEN m.change_sets END), 0) AS received_sets,
                 COALESCE(SUM(CASE WHEN m.reason = 'returned' THEN m.change_sets END), 0) AS returned_sets
              FROM stock_colors c
              JOIN stock_styles s ON s.id = c.style_id
+             LEFT JOIN stock_departments d ON d.slug = s.segment
+             LEFT JOIN stock_categories k ON k.slug = s.category
              LEFT JOIN stock_movements m ON m.color_id = c.id AND m.created_at >= ?
-             GROUP BY s.id, s.name, s.style_no, s.segment, s.status, s.set_price_cents, s.sort_order, c.id, c.code, c.name, c.is_active, c.sets_in_stock, c.sort_order
-             ORDER BY s.segment, s.sort_order, s.id, c.sort_order, c.id",
+             GROUP BY s.id, s.name, s.style_no, s.segment, s.category, d.name, d.sort_order, k.name, k.sort_order, s.status, s.set_price_cents, s.sort_order,
+                c.id, c.code, c.name, c.is_active, c.sets_in_stock, c.sort_order
+             ORDER BY d.sort_order, s.segment, k.sort_order, s.category, s.sort_order, s.id, c.sort_order, c.id",
             [$since],
         );
 
@@ -190,6 +197,9 @@ final class StockCounts
                 'style_name' => (string) $row['style_name'],
                 'style_no' => $row['style_no'],
                 'segment' => (string) $row['segment'],
+                'category' => (string) $row['category'],
+                'department_name' => (string) ($row['department_name'] ?? $row['segment']),
+                'category_name' => (string) ($row['category_name'] ?? $row['category']),
                 'shown' => $row['status'] === 'active' && (int) $row['is_active'] === 1,
                 'code' => (string) $row['code'],
                 'color' => (string) $row['name'],

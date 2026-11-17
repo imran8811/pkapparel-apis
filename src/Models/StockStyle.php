@@ -9,24 +9,28 @@ use App\Core\Text;
 use App\Core\ValidationException;
 
 /**
- * Stock styles: ready jeans sold from stock on hand, separate from the wholesale shop's made-to-order styles (Product).
+ * Stock styles: ready clothes sold from stock on hand, separate from the wholesale shop's made-to-order styles (Product).
  * Each style is sold by set only (one set per style: its sizes with a number of pieces per size). Its price is per
  * piece (piece_price_cents); a set costs its pieces times that (set_price_cents, kept by encode()).
  * Colors and the sets each has in stock are in StockColor. The stock pages show active styles with an active color.
+ *
+ * A style is in a department (`segment`: the slug of a StockDepartment, e.g. men) and a category (`category`: the slug
+ * of a StockCategory, e.g. jeans). Its specs are those of its category's product type, then the stock's own.
  */
 final class StockStyle
 {
-    public const SEGMENTS = ['men', 'boys'];
-
     public const STATUSES = ['draft', 'active', 'archived'];
 
-    /** Stock is jeans only: the specs (labels and suggestions) are those of the wholesale shop's jeans pants. */
-    public const PRODUCT_TYPE = 'jeans-pant';
-
-    /** Details only stock listings have, shown after the jeans specs (owner request 2026-11-15: the label). */
-    private const OWN_SPECS = [
+    /** Details only stock listings have, shown after their category's specs (owner request 2026-11-15: the label). */
+    public const OWN_SPECS = [
         ['key' => 'label', 'label' => 'Label', 'max' => 80, 'suggestions' => []],
     ];
+
+    /** A style with its department's and category's names, and its category's product type (whose specs it has). */
+    private const SELECT = 'SELECT s.*, d.name AS department_name, k.name AS category_name, k.product_type
+        FROM stock_styles s
+        LEFT JOIN stock_departments d ON d.slug = s.segment
+        LEFT JOIN stock_categories k ON k.slug = s.category';
 
     /** Waist sizes in inches: boys' jeans start at 16, men's go up to 48. */
     public const SIZE_MIN = 16;
@@ -36,8 +40,8 @@ final class StockStyle
     public const MAX_PCS_PER_SIZE = 24;
 
     private const FILLABLE = [
-        'slug', 'name', 'style_no', 'segment', 'specs', 'description_html', 'set_sizes', 'piece_price_cents', 'set_price_cents',
-        'seo_title', 'seo_description', 'status', 'is_featured', 'sort_order',
+        'slug', 'name', 'style_no', 'segment', 'category', 'specs', 'description_html', 'set_sizes', 'piece_price_cents',
+        'set_price_cents', 'seo_title', 'seo_description', 'status', 'is_featured', 'sort_order',
     ];
 
     public function __construct(private readonly Database $db)
@@ -45,13 +49,14 @@ final class StockStyle
     }
 
     /**
-     * The details a stock listing has, in display order: the jeans specs of the wholesale shop, then the stock's own.
+     * The details a stock listing has, in display order: the specs of its category's product type (as in the
+     * wholesale shop: "Inseam" for the length of pants…), then the stock's own.
      *
      * @return list<array{key: string, label: string, max: int, suggestions: list<string>}>
      */
-    public static function specFields(): array
+    public static function specFields(string $productType): array
     {
-        return [...ProductTypes::specs(self::PRODUCT_TYPE), ...self::OWN_SPECS];
+        return [...ProductTypes::specs($productType), ...self::OWN_SPECS];
     }
 
     /**
@@ -59,7 +64,7 @@ final class StockStyle
      *
      * @return list<array<string, mixed>>
      */
-    public function active(?string $segment): array
+    public function active(?string $segment, ?string $category = null): array
     {
         $where = "s.status = 'active' AND EXISTS (SELECT 1 FROM stock_colors c WHERE c.style_id = s.id AND c.is_active = 1)";
         $params = [];
@@ -67,7 +72,11 @@ final class StockStyle
             $where .= ' AND s.segment = ?';
             $params[] = $segment;
         }
-        $rows = $this->db->fetchAll("SELECT s.* FROM stock_styles s WHERE {$where} ORDER BY s.is_featured DESC, s.sort_order, s.id", $params);
+        if ($category !== null) {
+            $where .= ' AND s.category = ?';
+            $params[] = $category;
+        }
+        $rows = $this->db->fetchAll(self::SELECT . " WHERE {$where} ORDER BY s.is_featured DESC, s.sort_order, s.id", $params);
 
         return array_map([self::class, 'decode'], $rows);
     }
@@ -75,21 +84,33 @@ final class StockStyle
     /** @return array<string, mixed>|null */
     public function findActiveBySlug(string $slug): ?array
     {
-        $row = $this->db->fetch("SELECT * FROM stock_styles WHERE slug = ? AND status = 'active'", [$slug]);
+        $row = $this->db->fetch(self::SELECT . " WHERE s.slug = ? AND s.status = 'active'", [$slug]);
 
         return $row === null ? null : self::decode($row);
     }
 
     // ----- Admin -----
 
-    /** @return array{items: list<array<string, mixed>>, total: int} */
-    public function adminList(?string $status, ?string $search, int $page, int $perPage): array
+    /**
+     * Listings in their department's, then their category's, staff order.
+     *
+     * @return array{items: list<array<string, mixed>>, total: int}
+     */
+    public function adminList(?string $status, ?string $search, int $page, int $perPage, ?string $segment = null, ?string $category = null): array
     {
         $where = ['1 = 1'];
         $params = [];
         if ($status !== null) {
             $where[] = 's.status = ?';
             $params[] = $status;
+        }
+        if ($segment !== null) {
+            $where[] = 's.segment = ?';
+            $params[] = $segment;
+        }
+        if ($category !== null) {
+            $where[] = 's.category = ?';
+            $params[] = $category;
         }
         if ($search !== null && $search !== '') {
             $like = '%' . addcslashes($search, '%_\\') . '%';
@@ -100,7 +121,7 @@ final class StockStyle
 
         $total = (int) $this->db->fetchValue("SELECT COUNT(*) FROM stock_styles s WHERE {$condition}", $params);
         $rows = $this->db->fetchAll(
-            "SELECT s.*,
+            "SELECT s.*, d.name AS department_name, k.name AS category_name, k.product_type,
                 (SELECT COUNT(*) FROM stock_colors c WHERE c.style_id = s.id) AS color_count,
                 (SELECT COALESCE(SUM(c.sets_in_stock), 0) FROM stock_colors c WHERE c.style_id = s.id AND c.is_active = 1) AS sets_in_stock,
                 (SELECT c.name FROM stock_colors c WHERE c.style_id = s.id ORDER BY c.sort_order, c.id LIMIT 1) AS color_name,
@@ -108,8 +129,11 @@ final class StockStyle
                 (SELECT c.hex FROM stock_colors c WHERE c.style_id = s.id ORDER BY c.sort_order, c.id LIMIT 1) AS color_hex,
                 (SELECT i.path FROM stock_images i JOIN stock_colors c ON c.id = i.color_id
                  WHERE i.style_id = s.id ORDER BY c.sort_order, c.id, i.sort_order, i.id LIMIT 1) AS thumbnail
-             FROM stock_styles s WHERE {$condition}
-             ORDER BY s.segment, s.sort_order, s.id
+             FROM stock_styles s
+             LEFT JOIN stock_departments d ON d.slug = s.segment
+             LEFT JOIN stock_categories k ON k.slug = s.category
+             WHERE {$condition}
+             ORDER BY d.sort_order, s.segment, k.sort_order, s.category, s.sort_order, s.id
              LIMIT " . (int) $perPage . ' OFFSET ' . (int) max(0, ($page - 1) * $perPage),
             $params,
         );
@@ -120,7 +144,7 @@ final class StockStyle
     /** @return array<string, mixed>|null Any style, whatever its status. */
     public function find(int $id): ?array
     {
-        $row = $this->db->fetch('SELECT * FROM stock_styles WHERE id = ?', [$id]);
+        $row = $this->db->fetch(self::SELECT . ' WHERE s.id = ?', [$id]);
 
         return $row === null ? null : self::decode($row);
     }
@@ -168,17 +192,18 @@ final class StockStyle
     }
 
     /**
-     * The specs that are filled in (the jeans specs and the label), as {key: value}.
+     * The specs that are filled in (those of the category's product type, and the label), as {key: value}. Others are
+     * left out.
      *
      * @return array<string, string>
      */
-    public static function cleanSpecs(mixed $input): array
+    public static function cleanSpecs(mixed $input, string $productType): array
     {
         if (!is_array($input)) {
             throw new ValidationException(['specs' => 'Must be a list of details.']);
         }
         $specs = [];
-        foreach (self::specFields() as $field) {
+        foreach (self::specFields($productType) as $field) {
             $value = $input[$field['key']] ?? null;
             if ($value !== null && !is_string($value)) {
                 throw new ValidationException(["specs.{$field['key']}" => 'Must be text.']);
@@ -294,6 +319,10 @@ final class StockStyle
             $row['piece_price_cents'] = (int) round($row['set_price_cents'] / $row['set_pieces']);
         }
         $row['is_featured'] = (bool) $row['is_featured'];
+        // A listing's department and category always exist (foreign keys); their slugs stand in for the names otherwise.
+        $row['department_name'] = (string) ($row['department_name'] ?? $row['segment']);
+        $row['category_name'] = (string) ($row['category_name'] ?? $row['category']);
+        $row['product_type'] = (string) ($row['product_type'] ?? 'jeans-pant');
         foreach (['created_at', 'updated_at'] as $column) {
             $row[$column] = gmdate(DATE_ATOM, (int) strtotime($row[$column] . ' UTC'));
         }

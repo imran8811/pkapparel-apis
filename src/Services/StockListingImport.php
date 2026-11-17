@@ -9,7 +9,10 @@ use App\Core\Database;
 use App\Core\HtmlSanitizer;
 use App\Core\Text;
 use App\Core\ValidationException;
+use App\Models\ProductTypes;
+use App\Models\StockCategory;
 use App\Models\StockColor;
+use App\Models\StockDepartment;
 use App\Models\StockStyle;
 
 /**
@@ -18,9 +21,13 @@ use App\Models\StockStyle;
  * listings are created only when no line has a problem, all of them or none. They start as drafts, like a listing
  * added by hand: each needs a photo of its color before it can be shown.
  *
- * Columns, in any order (others are ignored): Name, Style no., For (Men or Boys), Color, Color code, Swatch, Set
- * ("28x2, 30x2, 32x2": waist size x pieces), Price per piece (Rs), Sets in stock, a column per spec named by its label
- * ("Fit", "Inseam", …, "Label") and Description (plain text; a blank line starts a new paragraph).
+ * Columns, in any order (others are ignored): Name, Style no., For (a department: Men, Women, Boys…), Category (Jeans,
+ * Cotton pants…), Color, Color code, Swatch, Set ("28x2, 30x2, 32x2": waist size x pieces), Price per piece (Rs), Sets
+ * in stock, a column per spec named by its label ("Fit", "Inseam", …, "Label") and Description (plain text; a blank line
+ * starts a new paragraph). The spec columns are those of every category; each line uses those of its own category.
+ *
+ * The departments and categories ($sections) come from the database: {departments: [{slug, name}…], categories:
+ * [{slug, name, product_type}…]}.
  */
 final class StockListingImport
 {
@@ -34,7 +41,8 @@ final class StockListingImport
     private const COLUMNS = [
         'name' => ['Name', ['name', 'style', 'style name']],
         'style_no' => ['Style no.', ['style no.', 'style no', 'style number']],
-        'segment' => ['For', ['for', 'segment']],
+        'segment' => ['For', ['for', 'department', 'segment']],
+        'category' => ['Category', ['category']],
         'color' => ['Color', ['color', 'colour', 'color name']],
         'code' => ['Color code', ['color code', 'colour code', 'code']],
         'hex' => ['Swatch', ['swatch', 'swatch color', 'hex']],
@@ -43,11 +51,9 @@ final class StockListingImport
         'sets' => ['Sets in stock', ['sets in stock', 'sets']],
     ];
 
-    private const REQUIRED = ['name', 'segment', 'color', 'code', 'set', 'price'];
+    private const REQUIRED = ['name', 'segment', 'category', 'color', 'code', 'set', 'price'];
 
     private const DESCRIPTION = 'Description';
-
-    private const SEGMENTS = ['men' => 'men', 'man' => 'men', "men's" => 'men', 'mens' => 'men', 'boys' => 'boys', 'boy' => 'boys', "boys'" => 'boys', "boy's" => 'boys'];
 
     private const STRETCH = ['stretch' => 'stretch', 'rigid' => 'non-stretch', 'non-stretch' => 'non-stretch', 'non stretch' => 'non-stretch', 'no stretch' => 'non-stretch', 'rigid (no stretch)' => 'non-stretch'];
 
@@ -55,6 +61,8 @@ final class StockListingImport
         private readonly Database $db,
         private readonly StockStyle $styles,
         private readonly StockColor $colors,
+        private readonly StockDepartment $departments,
+        private readonly StockCategory $categories,
         private readonly StockLevels $levels,
         private readonly HtmlSanitizer $sanitizer,
         private readonly WebRevalidator $revalidator,
@@ -62,15 +70,52 @@ final class StockListingImport
     }
 
     /** An empty file with every column, to fill in Excel. */
-    public static function template(): string
+    public function template(): string
     {
-        return Csv::write(self::headers(), []);
+        return Csv::write(self::headers($this->sections()), []);
     }
 
-    /** @return list<string> The template's columns: the listing, its color and stock, the specs, then the description. */
-    public static function headers(): array
+    /** @return array{departments: list<array<string, mixed>>, categories: list<array<string, mixed>>} */
+    public function sections(): array
     {
-        return [...array_column(self::COLUMNS, 0), ...array_column(StockStyle::specFields(), 'label'), self::DESCRIPTION];
+        return ['departments' => $this->departments->all(), 'categories' => $this->categories->all()];
+    }
+
+    /**
+     * The template's columns: the listing, its color and stock, the specs of every category, then the description.
+     *
+     * @param array{departments: list<array<string, mixed>>, categories: list<array<string, mixed>>} $sections
+     * @return list<string>
+     */
+    public static function headers(array $sections): array
+    {
+        return [...array_column(self::COLUMNS, 0), ...array_column(self::specColumns($sections), 'label'), self::DESCRIPTION];
+    }
+
+    /**
+     * The spec columns: every spec of the categories' product types once, named by its first label (a spec named
+     * differently by another type, such as "Wash" and "Finish", is read under either name), then the stock's own.
+     *
+     * @param array{departments: list<array<string, mixed>>, categories: list<array<string, mixed>>} $sections
+     * @return list<array{key: string, label: string, names: list<string>}>
+     */
+    private static function specColumns(array $sections): array
+    {
+        $columns = [];
+        $add = static function (array $field) use (&$columns): void {
+            $columns[$field['key']] ??= ['key' => $field['key'], 'label' => $field['label'], 'names' => [$field['key'], str_replace('_', ' ', $field['key'])]];
+            $columns[$field['key']]['names'][] = mb_strtolower($field['label']);
+        };
+        foreach ($sections['categories'] as $category) {
+            foreach (ProductTypes::specs((string) $category['product_type']) as $field) {
+                $add($field);
+            }
+        }
+        foreach (StockStyle::OWN_SPECS as $field) {
+            $add($field);
+        }
+
+        return array_values(array_map(static fn (array $column): array => ['names' => array_values(array_unique($column['names']))] + $column, $columns));
     }
 
     /**
@@ -81,13 +126,14 @@ final class StockListingImport
     public function import(string $csv, bool $apply, ?int $staffId): array
     {
         $result = ['listings' => [], 'errors' => [], 'applied' => false];
+        $sections = $this->sections();
         if (strlen($csv) > self::MAX_BYTES) {
             $result['errors'][] = ['line' => 0, 'message' => 'The file is larger than 512 KB. Import at most ' . self::MAX_ROWS . ' listings at a time.'];
 
             return $result;
         }
         $lines = Csv::read($csv);
-        $header = self::header(array_shift($lines) ?? []);
+        $header = self::header(array_shift($lines) ?? [], $sections);
         if ($header['missing'] !== []) {
             $names = implode(', ', array_map(static fn (string $name): string => "“{$name}”", $header['missing']));
             $result['errors'][] = ['line' => 1, 'message' => "The file needs the columns {$names}. Start from the template."];
@@ -109,7 +155,7 @@ final class StockListingImport
             if (implode('', array_map('trim', $cells)) === '') {
                 continue;
             }
-            [$listing, $problems] = self::listing($cells, $header);
+            [$listing, $problems] = self::listing($cells, $header, $sections);
             if ($listing !== null) {
                 $code = mb_strtolower($listing['color']['code']);
                 if (isset($codes[$code])) {
@@ -148,6 +194,7 @@ final class StockListingImport
                         'name' => $listing['name'],
                         'style_no' => $listing['style_no'],
                         'segment' => $listing['segment'],
+                        'category' => $listing['category'],
                         'specs' => $listing['specs'],
                         'description_html' => $this->sanitizer->sanitize($listing['description_html']),
                         'set_sizes' => $listing['set_sizes'],
@@ -177,6 +224,9 @@ final class StockListingImport
             'name' => $listing['name'],
             'style_no' => $listing['style_no'],
             'segment' => $listing['segment'],
+            'category' => $listing['category'],
+            'department_name' => $listing['department_name'],
+            'category_name' => $listing['category_name'],
             'slug' => $listing['slug'],
             'color' => $listing['color']['name'],
             'code' => $listing['color']['code'],
@@ -196,9 +246,10 @@ final class StockListingImport
      * Where each column is in the file's first line, and the required columns it lacks.
      *
      * @param list<string> $cells
+     * @param array{departments: list<array<string, mixed>>, categories: list<array<string, mixed>>} $sections
      * @return array{columns: array<string, int>, specs: array<string, int>, description: ?int, missing: list<string>}
      */
-    public static function header(array $cells): array
+    public static function header(array $cells, array $sections): array
     {
         $names = array_map(static fn (string $cell): string => mb_strtolower(trim($cell)), $cells);
         $find = static function (array $accepted) use ($names): ?int {
@@ -219,10 +270,10 @@ final class StockListingImport
             }
         }
         $specs = [];
-        foreach (StockStyle::specFields() as $field) {
-            $index = $find(array_values(array_unique([mb_strtolower($field['label']), $field['key'], str_replace('_', ' ', $field['key'])])));
+        foreach (self::specColumns($sections) as $column) {
+            $index = $find($column['names']);
             if ($index !== null) {
-                $specs[$field['key']] = $index;
+                $specs[$column['key']] = $index;
             }
         }
         $missing = array_values(array_map(
@@ -239,9 +290,10 @@ final class StockListingImport
      *
      * @param list<string> $cells
      * @param array{columns: array<string, int>, specs: array<string, int>, description: ?int, missing: list<string>} $header
+     * @param array{departments: list<array<string, mixed>>, categories: list<array<string, mixed>>} $sections
      * @return array{0: array<string, mixed>|null, 1: list<string>}
      */
-    public static function listing(array $cells, array $header): array
+    public static function listing(array $cells, array $header, array $sections): array
     {
         $cell = static fn (?int $index): string => $index === null ? '' : trim((string) ($cells[$index] ?? ''));
         $value = static fn (string $key): string => $cell($header['columns'][$key] ?? null);
@@ -256,9 +308,16 @@ final class StockListingImport
             $problems[] = 'The style no. has more than 40 characters.';
         }
         $for = $value('segment');
-        $segment = self::SEGMENTS[mb_strtolower($for)] ?? null;
-        if ($segment === null) {
-            $problems[] = $for === '' ? '“For” is missing: write Men or Boys.' : "“For” is Men or Boys, not “{$for}”.";
+        $department = self::section($for, $sections['departments']);
+        if ($department === null) {
+            $names = self::names($sections['departments']);
+            $problems[] = $for === '' ? "“For” is missing: write {$names}." : "“For” is {$names}, not “{$for}”.";
+        }
+        $categoryText = $value('category');
+        $category = self::section($categoryText, $sections['categories']);
+        if ($category === null) {
+            $names = self::names($sections['categories']);
+            $problems[] = $categoryText === '' ? "The category is missing: write {$names}." : "The category is {$names}, not “{$categoryText}”.";
         }
 
         $color = $value('color');
@@ -302,7 +361,6 @@ final class StockListingImport
         }
 
         $specs = [];
-        $labels = array_column(StockStyle::specFields(), 'label', 'key');
         foreach ($header['specs'] as $key => $index) {
             $specs[$key] = $cell($index);
         }
@@ -313,11 +371,16 @@ final class StockListingImport
             }
             $specs['stretch'] = $stretch ?? '';
         }
-        try {
-            $specs = StockStyle::cleanSpecs($specs);
-        } catch (ValidationException $e) {
-            foreach ($e->fields as $field => $message) {
-                $problems[] = ($labels[substr($field, strlen('specs.'))] ?? 'Specifications') . ': ' . $message;
+        // The specs of the line's category (those of other categories are left out, as in the listing form).
+        if ($category !== null) {
+            $productType = (string) $category['product_type'];
+            try {
+                $specs = StockStyle::cleanSpecs($specs, $productType);
+            } catch (ValidationException $e) {
+                $labels = array_column(StockStyle::specFields($productType), 'label', 'key');
+                foreach ($e->fields as $field => $message) {
+                    $problems[] = ($labels[substr($field, strlen('specs.'))] ?? 'Specifications') . ': ' . $message;
+                }
             }
         }
 
@@ -325,7 +388,7 @@ final class StockListingImport
         if ($problems === [] && $slug === '') {
             $problems[] = 'The name and color need some letters or digits for the web address.';
         }
-        if ($problems !== []) {
+        if ($problems !== [] || $department === null || $category === null) {
             return [null, $problems];
         }
 
@@ -333,7 +396,10 @@ final class StockListingImport
             'slug' => $slug,
             'name' => $name,
             'style_no' => $styleNo === '' ? null : $styleNo,
-            'segment' => $segment,
+            'segment' => (string) $department['slug'],
+            'category' => (string) $category['slug'],
+            'department_name' => (string) $department['name'],
+            'category_name' => (string) $category['name'],
             'specs' => $specs,
             'description_html' => self::paragraphs($cell($header['description'])),
             'set_sizes' => $sizes,
@@ -366,6 +432,52 @@ final class StockListingImport
         }
 
         return $items;
+    }
+
+    /**
+     * The department or category a cell names, by its name or web address, written loosely: "Men", "men's", "Mens" and
+     * "man" are all the men's department, "boy" and "Boys'" the boys', "cotton pant" the cotton pants.
+     *
+     * @param list<array<string, mixed>> $sections
+     * @return array<string, mixed>|null
+     */
+    public static function section(string $text, array $sections): ?array
+    {
+        $text = mb_strtolower(trim($text));
+        if ($text === '') {
+            return null;
+        }
+        $key = self::matchKey($text);
+        foreach ($sections as $section) {
+            $names = [mb_strtolower((string) $section['name']), (string) $section['slug']];
+            if (in_array($text, $names, true) || ($key !== '' && in_array($key, array_map(self::matchKey(...), $names), true))) {
+                return $section;
+            }
+        }
+
+        return null;
+    }
+
+    /** "men's" → "men", "Boys'" → "boy", "cotton pants" → "cottonpant", "woman" → "women". */
+    private static function matchKey(string $text): string
+    {
+        $key = (string) preg_replace('/[^a-z0-9]+/', '', mb_strtolower($text));
+        $key = (string) preg_replace('/s$/', '', $key);
+
+        return ['man' => 'men', 'woman' => 'women'][$key] ?? $key;
+    }
+
+    /**
+     * "Men, Women or Boys": the names to write.
+     *
+     * @param list<array<string, mixed>> $sections
+     */
+    private static function names(array $sections): string
+    {
+        $names = array_map(static fn (array $section): string => (string) $section['name'], $sections);
+        $last = array_pop($names);
+
+        return $names === [] ? (string) $last : implode(', ', $names) . ' or ' . $last;
     }
 
     /** "Rs 1,200" or "980.50" in paisa; null when it is not an amount. */

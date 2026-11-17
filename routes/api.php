@@ -53,7 +53,8 @@ return static function (Router $router): void {
         $router->get('/products/{slug:[a-z0-9-]+}', [ShopController::class, 'product']);
         $router->get('/shop/categories', [ShopController::class, 'categories']);
 
-        // Stock: ready jeans sold by set
+        // Stock: ready clothes sold by set, by department and category
+        $router->get('/stock/sections', [StockController::class, 'sections']);
         $router->get('/stock/styles', [StockController::class, 'styles']);
         $router->get('/stock/styles/{slug:[a-z0-9-]+}', [StockController::class, 'style']);
 
@@ -180,6 +181,12 @@ return static function (Router $router): void {
             $router->put('/product-colors/{id:\d+}', [Admin\ProductColorController::class, 'update']);
             $router->delete('/product-colors/{id:\d+}', [Admin\ProductColorController::class, 'destroy']);
 
+            foreach (['departments' => Admin\StockDepartmentController::class, 'categories' => Admin\StockCategoryController::class] as $path => $controller) {
+                $router->get("/stock/{$path}", [$controller, 'index']);
+                $router->post("/stock/{$path}", [$controller, 'store']);
+                $router->put("/stock/{$path}/{id:\\d+}", [$controller, 'update']);
+                $router->delete("/stock/{$path}/{id:\\d+}", [$controller, 'destroy']);
+            }
             $router->get('/stock/styles', [Admin\StockStyleController::class, 'index']);
             $router->post('/stock/styles', [Admin\StockStyleController::class, 'store']);
             $router->get('/stock/styles/{id:\d+}', [Admin\StockStyleController::class, 'show']);
