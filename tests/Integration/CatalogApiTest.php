@@ -52,6 +52,7 @@ final class CatalogApiTest extends IntegrationTestCase
     private function cleanUp(): void
     {
         $this->db->execute("DELETE FROM products WHERE slug LIKE 'test-style%'");
+        $this->db->execute("DELETE FROM redirects WHERE from_path LIKE '/wholesale-shop/%/test-style%'");
         $this->db->execute("DELETE FROM size_charts WHERE name LIKE 'TEST %'");
         $this->db->execute("DELETE t FROM auth_tokens t JOIN staff_users s ON s.id = t.user_id AND t.user_type = 'staff' WHERE s.email = ?", [self::EDITOR]);
         $this->db->execute('DELETE FROM staff_users WHERE email = ?', [self::EDITOR]);
@@ -186,6 +187,38 @@ final class CatalogApiTest extends IntegrationTestCase
 
         self::assertSame(204, $this->admin('DELETE', "/v1/admin/products/{$style['id']}")->status());
         self::assertSame(404, $this->send('GET', '/v1/products/test-style-denim-jacket')->status());
+    }
+
+    public function testAnAddressMadeFromTheNameFollowsANewName(): void
+    {
+        // A duplicate is named "… (copy)": its address follows when it is renamed after it was created.
+        $copy = $this->admin('POST', '/v1/admin/products', ['name' => 'Test style denim jacket (copy)', 'slug' => null] + $this->styleInput())->decoded()['data'];
+        self::assertSame('test-style-denim-jacket-copy', $copy['slug']);
+        $renamed = $this->admin('PUT', "/v1/admin/products/{$copy['id']}", ['name' => 'Test style denim vest', 'slug' => $copy['slug']] + $this->styleInput());
+        self::assertSame(200, $renamed->status(), $renamed->body());
+        self::assertSame('test-style-denim-vest', $renamed->decoded()['data']['slug']);
+
+        // A style in the shop keeps its old address working.
+        $style = $this->admin('POST', '/v1/admin/products', $this->styleInput())->decoded()['data'];
+        $color = $this->admin('POST', "/v1/admin/products/{$style['id']}/colors", ['code' => 'TEST-902', 'name' => 'Indigo', 'images' => [['path' => $this->upload(), 'alt' => 'Test jacket']]]);
+        self::assertSame(201, $color->status(), $color->body());
+        self::assertSame(200, $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['status' => 'active'] + $this->styleInput())->status());
+        $shown = $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['status' => 'active', 'name' => 'Test style trucker jacket'] + $this->styleInput())->decoded()['data'];
+        self::assertSame('test-style-trucker-jacket', $shown['slug']);
+        self::assertSame(
+            '/wholesale-shop/men/denim-jacket/test-style-trucker-jacket',
+            $this->db->fetchValue('SELECT to_path FROM redirects WHERE from_path = ?', ['/wholesale-shop/men/denim-jacket/test-style-denim-jacket']),
+        );
+
+        // Taken by another style: numbered.
+        $this->admin('PUT', "/v1/admin/products/{$copy['id']}", ['name' => 'Test style trucker jacket', 'slug' => 'test-style-denim-vest'] + $this->styleInput());
+        self::assertSame('test-style-trucker-jacket-2', $this->db->fetchValue('SELECT slug FROM products WHERE id = ?', [$copy['id']]));
+
+        // A typed address is used, and stays when the style is renamed again.
+        $typed = $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['status' => 'active', 'name' => 'Test style sherpa jacket', 'slug' => 'test-style-jk-77'] + $this->styleInput());
+        self::assertSame('test-style-jk-77', $typed->decoded()['data']['slug']);
+        $kept = $this->admin('PUT', "/v1/admin/products/{$style['id']}", ['status' => 'active', 'name' => 'Test style lined jacket', 'slug' => 'test-style-jk-77'] + $this->styleInput());
+        self::assertSame('test-style-jk-77', $kept->decoded()['data']['slug']);
     }
 
     public function testStyleValidation(): void
