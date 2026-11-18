@@ -18,8 +18,10 @@ use DOMElement;
 use Throwable;
 
 /**
- * Copies the wholesale shop's jeans for men (and for boys, should it have any) into the stock (owner requests
- * 2026-11-09): into the men's or boys' department, in the first stock category with the specs of jeans pants (Jeans).
+ * Copies the wholesale shop's styles for men (and for boys, should it have any) into the stock (owner requests
+ * 2026-11-09 for the jeans, 2026-11-18 for the cotton pants): the styles of every product type a stock category has the
+ * specs of, each into the men's or boys' department and the first such category in staff order (jeans pants into
+ * Jeans, chino pants into Cotton pants). Types no stock category has (cargo trousers…) are not offered.
  * Every stock listing is one color with its own details, so each wholesale color becomes a listing of its own, at
  * {style}-{color}: the style's name, style no., specs (with the color's own fabric details), the set (the wholesale
  * waist sizes with the wholesale set's pieces per size), the color and its photos. From then on a copy is separate from
@@ -34,9 +36,6 @@ use Throwable;
  */
 final class StockFromWholesale
 {
-    /** The wholesale product type that is copied. */
-    public const PRODUCT_TYPE = 'jeans-pant';
-
     /** Text about the wholesale business, which the stock pages must not show. */
     private const WHOLESALE_WORDING = '/pakistan|wholesale|export|made[ -]to[ -]order|minimum order|\bmoq\b|pieces per colou?r|from \d+ pieces|private[ -]label|own (?:brand )?labels?|packaging|lead time|deposit|\bship(?:s|ped|ping)?\b|by air|by sea|freight|forwarder|tech pack|\bquotes?\b|\bsamples?\b/i';
 
@@ -55,10 +54,11 @@ final class StockFromWholesale
     }
 
     /**
-     * Every color of the wholesale jeans for men and boys (styles shown or drafts, not archived), each with what its
-     * stock listing would be: the newest styles first, as in the shop, and each style's colors in staff order. A color
-     * is in the stock already when a stock color has its code or a listing has its web address (copied before, or made
-     * by hand); `problem` says why one cannot be copied.
+     * Every color of the wholesale styles for men and boys of the types the stock has a category for (styles shown or
+     * drafts, not archived), each with what its stock listing would be: by the category it goes in (in staff order),
+     * then the newest styles first, as in the shop, and each style's colors in staff order. A color is in the stock
+     * already when a stock color has its code or a listing has its web address (copied before, or made by hand);
+     * `problem` says why one cannot be copied.
      *
      * @return list<array<string, mixed>>
      */
@@ -78,7 +78,7 @@ final class StockFromWholesale
     {
         $done = [];
         // The last first: the stock lists the newest listings first, so the copies come out in the order they are
-        // listed here (the newest wholesale style first, its colors in order).
+        // listed here (by category, the newest wholesale style first, its colors in order).
         foreach (array_reverse($this->plans($colorIds)) as $plan) {
             if ($plan['stock_style_id'] === null && $plan['problem'] === null) {
                 $done[] = $this->copyListing($plan);
@@ -97,19 +97,28 @@ final class StockFromWholesale
      */
     private function plans(?array $colorIds): array
     {
-        if ($colorIds === []) {
+        // Where the copies go: for each product type a stock category has the specs of, the first such category (in
+        // staff order). Only these types are offered.
+        $categories = [];
+        foreach ($this->categories->all() as $category) {
+            $categories[(string) $category['product_type']] ??= $category;
+        }
+        if ($colorIds === [] || $categories === []) {
             return [];
         }
-        $where = "p.product_type = ? AND p.segment IN ('men', 'boys') AND p.status <> 'archived'";
-        $params = [self::PRODUCT_TYPE];
+        $types = array_keys($categories);
+        $typeList = implode(', ', array_fill(0, count($types), '?'));
+        $where = "p.product_type IN ({$typeList}) AND p.segment IN ('men', 'boys') AND p.status <> 'archived'";
+        $params = $types;
         if ($colorIds !== null) {
             $where .= ' AND c.id IN (' . implode(', ', array_fill(0, count($colorIds), '?')) . ')';
             array_push($params, ...$colorIds);
         }
+        // By the category they go in (in staff order: $types follows it), then the newest styles first.
         $rows = $this->db->fetchAll(
             "SELECT p.id AS product_id, c.id AS color_id FROM products p JOIN product_colors c ON c.product_id = p.id
-             WHERE {$where} ORDER BY " . Product::NEWEST . ', c.sort_order, c.id',
-            $params,
+             WHERE {$where} ORDER BY FIELD(p.product_type, {$typeList}), " . Product::NEWEST . ', c.sort_order, c.id',
+            [...$params, ...$types],
         );
         $productIds = array_values(array_unique(array_map(static fn (array $row): int => (int) $row['product_id'], $rows)));
         $colors = [];
@@ -119,9 +128,9 @@ final class StockFromWholesale
             }
         }
 
-        // Where the copies go: the stock's jeans category and the departments (by slug).
+        // The category of each type, and the departments' names by slug.
         $target = [
-            'category' => $this->categories->firstOfType(self::PRODUCT_TYPE),
+            'categories' => $categories,
             'departments' => array_column($this->departments->all(), 'name', 'slug'),
         ];
         $plans = [];
@@ -146,13 +155,14 @@ final class StockFromWholesale
      * @param array{product: array<string, mixed>, sizes: list<array{size: string, pcs: int}>, description: string, left_out: list<string>} $shared
      *        the wholesale style (decoded products row) and what all its colors share
      * @param array<string, mixed> $color one of its colors, with its photos
-     * @param array{category: array<string, mixed>|null, departments: array<string, string>} $target the stock's jeans
-     *        category and its departments' names by slug
+     * @param array{categories: array<string, array<string, mixed>>, departments: array<string, string>} $target the
+     *        stock category each product type is copied into, and the stock departments' names by slug
      * @return array<string, mixed>
      */
     private function plan(array $shared, array $color, array $target): array
     {
         $product = $shared['product'];
+        $category = $target['categories'][(string) $product['product_type']];
         $name = (string) $product['name'];
         $segment = $product['segment'] === 'boys' || preg_match('/\bboys?\b/i', $name) === 1 ? 'boys' : 'men';
         $slug = self::slug((string) $product['slug'], (string) $color['slug']);
@@ -193,18 +203,17 @@ final class StockFromWholesale
             },
             'problem' => $stockStyleId !== null ? null : match (true) {
                 $shared['sizes'] === [] => sprintf('Its sizes are not waist sizes from %d to %d.', StockStyle::SIZE_MIN, StockStyle::SIZE_MAX),
-                $target['category'] === null => 'The stock has no category with the details of jeans pants: add one under Stock categories.',
                 !isset($target['departments'][$segment]) => "The stock has no “{$segment}” department: add it under Stock categories.",
                 default => null,
             },
             'department_name' => $target['departments'][$segment] ?? $segment,
-            'category_name' => $target['category']['name'] ?? null,
+            'category_name' => $category['name'],
             'style' => [
                 'slug' => $slug,
                 'name' => $name,
                 'style_no' => $product['style_no'],
                 'segment' => $segment,
-                'category' => $target['category']['slug'] ?? null,
+                'category' => $category['slug'],
                 'specs' => self::specs($product, $color['spec_overrides']),
                 'description_html' => $shared['description'],
                 'set_sizes' => $shared['sizes'],
@@ -240,6 +249,8 @@ final class StockFromWholesale
             'slug' => $plan['style']['slug'],
             'style_no' => $plan['product']['style_no'],
             'wholesale_status' => $plan['product']['status'],
+            // The wholesale type (jeans-pant, chino-pant…): its stock category has its specs.
+            'product_type' => $plan['product']['product_type'],
             'segment' => $plan['style']['segment'],
             'category' => $plan['style']['category'],
             'department_name' => $plan['department_name'],
@@ -344,8 +355,8 @@ final class StockFromWholesale
     }
 
     /**
-     * The jeans specs that are filled in, as the stock keeps them ({key: value}): the style's, with the color's own
-     * fabric details (e.g. the olive color in cotton twill).
+     * The specs of the style's type that are filled in, as the stock keeps them ({key: value}): the style's, with the
+     * color's own fabric details (e.g. the olive color in cotton twill). Its stock category has the same specs.
      *
      * @param array<string, mixed> $product
      * @param array<string, mixed> $overrides the color's spec_overrides

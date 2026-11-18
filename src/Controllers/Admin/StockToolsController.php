@@ -67,7 +67,10 @@ final class StockToolsController extends AdminController
         return Response::data($this->listingImport->import($data['csv'], (bool) ($data['apply'] ?? false), $this->staff($request)['id']));
     }
 
-    /** GET /v1/admin/stock/from-wholesale: the wholesale shop's jeans for men and boys, and the stock jeans listing each color makes. */
+    /**
+     * GET /v1/admin/stock/from-wholesale: the wholesale shop's styles for men and boys of the types the stock has a
+     * category for (jeans, chino pants…), and the stock listing each color makes.
+     */
     public function wholesale(Request $request): Response
     {
         $this->authorize($request, 'editor');

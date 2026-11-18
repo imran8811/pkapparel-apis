@@ -393,6 +393,62 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame(403, $this->admin('GET', '/v1/admin/stock/from-wholesale', null, self::SALES)->status());
     }
 
+    public function testWholesaleChinosAreCopiedIntoTheCottonPants(): void
+    {
+        // Owner request 2026-11-18: the men's cotton pants (wholesale chino pants) are copied into the stock's Cotton
+        // pants, as the jeans go into its Jeans. A type no stock category has the specs of is not offered.
+        $style = function (string $key, string $type, string $code, array $specs): int {
+            $input = [
+                'name' => "Test stock men's {$key}", 'slug' => "test-stock-{$key}", 'segment' => 'men', 'product_type' => $type,
+                'specs' => $specs, 'sizes' => ['30', '32', '34', '36'], 'set_pcs_per_size' => 2, 'price_cents' => 550,
+            ];
+            $product = $this->admin('POST', '/v1/admin/products', $input);
+            self::assertSame(201, $product->status(), (string) $product->body());
+            $productId = $product->decoded()['data']['id'];
+            $color = $this->admin('POST', "/v1/admin/products/{$productId}/colors", [
+                'code' => $code, 'name' => 'Khaki', 'images' => [['path' => $this->upload('products'), 'alt' => "Test {$key} in khaki, front"]],
+            ]);
+            self::assertSame(201, $color->status(), (string) $color->body());
+            self::assertSame(200, $this->admin('PUT', "/v1/admin/products/{$productId}", ['status' => 'active'] + $input)->status());
+
+            return $color->decoded()['data']['id'];
+        };
+        $jeansId = $style('straight-jeans', 'jeans-pant', 'TEST-SC-1', ['fit' => 'Straight']);
+        $chinosId = $style('slim-chinos', 'chino-pant', 'TEST-SC-2', ['fit' => 'Slim', 'fabric' => 'Stretch cotton twill', 'stretch' => 'stretch', 'wash' => 'Silicone wash']);
+        $cargoId = $style('cargo-trousers', 'cargo-trouser', 'TEST-SC-3', ['fit' => 'Relaxed']);
+
+        $rows = array_values(array_filter(
+            $this->admin('GET', '/v1/admin/stock/from-wholesale')->decoded()['data'],
+            static fn (array $row): bool => str_starts_with($row['slug'], 'test-stock-'),
+        ));
+        self::assertSame([$jeansId, $chinosId], array_column($rows, 'color_id'), 'By the category they go in, in staff order (the chinos are newer); no cargo trousers');
+        self::assertSame(
+            ['chino-pant', 'men', 'cotton-pants', 'Men', 'Cotton pants', null, null, true],
+            [$rows[1]['product_type'], $rows[1]['segment'], $rows[1]['category'], $rows[1]['department_name'], $rows[1]['category_name'], $rows[1]['stock_style_id'], $rows[1]['problem'], $rows[1]['shown']],
+        );
+        self::assertSame(['jeans-pant', 'jeans', 'Jeans'], [$rows[0]['product_type'], $rows[0]['category'], $rows[0]['category_name']]);
+
+        $copied = $this->admin('POST', '/v1/admin/stock/from-wholesale', ['color_ids' => [$chinosId]])->decoded()['data']['copied'];
+        self::assertSame([[$chinosId, true, true]], array_map(static fn (array $c): array => [$c['color_id'], $c['new'], $c['shown']], $copied));
+        $listing = $this->admin('GET', "/v1/admin/stock/styles/{$copied[0]['stock_style_id']}")->decoded()['data'];
+        $this->files[] = $listing['colors'][0]['images'][0]['path'];
+        self::assertSame(
+            ['test-stock-slim-chinos-khaki', 'cotton-pants', 'Cotton pants', 'chino-pant', 'men', [['30', 2], ['32', 2], ['34', 2], ['36', 2]]],
+            [$listing['slug'], $listing['category'], $listing['category_name'], $listing['product_type'], $listing['segment'],
+                array_map(static fn (array $size): array => [$size['size'], $size['pcs']], $listing['set_sizes'])],
+        );
+        self::assertSame(['fit' => 'Slim', 'fabric' => 'Stretch cotton twill', 'stretch' => 'stretch', 'wash' => 'Silicone wash'], array_filter($listing['specs']));
+        $page = $this->send('GET', '/v1/stock/styles/test-stock-slim-chinos-khaki')->decoded()['data'];
+        self::assertSame('Finish', array_column($page['spec_fields'], 'label', 'key')['wash'], 'Shown as cotton pants: a finish, not a wash');
+        self::assertContains('test-stock-slim-chinos-khaki', array_column($this->send('GET', '/v1/stock/styles', ['segment' => 'men', 'category' => 'cotton-pants'])->decoded()['data'], 'slug'));
+        self::assertNull($this->wholesaleRow($jeansId)['stock_style_id'], 'Only the chosen colors are copied');
+
+        // Once a stock category has the specs of cargo trousers, they are offered too, into it.
+        $cargo = $this->admin('POST', '/v1/admin/stock/categories', ['name' => 'Test cargo', 'product_type' => 'cargo-trouser']);
+        self::assertSame(201, $cargo->status(), (string) $cargo->body());
+        self::assertSame(['test-cargo', 'Test cargo', null], [$this->wholesaleRow($cargoId)['category'], $this->wholesaleRow($cargoId)['category_name'], $this->wholesaleRow($cargoId)['problem']]);
+    }
+
     public function testStylesWithSeveralColorsAreSplitIntoListings(): void
     {
         // Made before every listing was one color: a shown style with two colors (the second put in without the check).
