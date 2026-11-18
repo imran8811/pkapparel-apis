@@ -9,7 +9,8 @@ use App\Models\StockStyle;
 
 /**
  * What the stock pages show: style cards for lists and full style pages, with the sets in stock per color.
- * Styles with sets in stock come first; sold-out styles stay listed (and their pages stay up) until staff hide them.
+ * Styles with sets in stock come first, the newest first; sold-out styles stay listed after them (and their pages stay
+ * up) until staff hide them.
  */
 final class StockCatalog
 {
@@ -21,7 +22,10 @@ final class StockCatalog
     ) {
     }
 
-    /** @return list<array<string, mixed>> Cards of the active styles, in stock first, then featured and in staff order. */
+    /**
+     * @return list<array<string, mixed>> Cards of the active styles: in stock first, then sold out, the newest first in
+     *     each. A card has `is_featured` and `sort_order` for the website's "Featured" order.
+     */
     public function listing(?string $segment, ?string $category = null): array
     {
         $styles = $this->styles->active($segment, $category);
@@ -128,6 +132,7 @@ final class StockCatalog
             'set_price_cents' => $style['set_price_cents'],
             'sets_in_stock' => array_sum(array_column($colors, 'sets_in_stock')),
             'is_featured' => $style['is_featured'],
+            'sort_order' => $style['sort_order'],
             'colors' => array_map(static fn (array $color): array => [
                 'code' => $color['code'],
                 'name' => $color['name'],

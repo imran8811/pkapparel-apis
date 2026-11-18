@@ -35,7 +35,7 @@ final class ProductController extends AdminController
     ) {
     }
 
-    /** GET /v1/admin/products?status=active&q=…&page=1 */
+    /** GET /v1/admin/products?status=active&q=…&page=1: the newest styles first. */
     public function index(Request $request): Response
     {
         $this->authorize($request, 'editor');
@@ -58,6 +58,8 @@ final class ProductController extends AdminController
             'is_featured' => $p['is_featured'],
             'color_count' => $p['color_count'],
             'thumbnail' => $p['thumbnail'] ?? null,
+            // The date added: the list is newest first.
+            'created_at' => $p['created_at'],
             'updated_at' => $p['updated_at'],
         ], $result['items']);
 

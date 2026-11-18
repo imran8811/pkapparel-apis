@@ -44,7 +44,7 @@ final class StockStyleController extends AdminController
     ) {
     }
 
-    /** GET /v1/admin/stock/styles?status=active&segment=men&category=jeans&q=…&page=1 */
+    /** GET /v1/admin/stock/styles?status=active&segment=men&category=jeans&q=…&page=1: the newest listings first. */
     public function index(Request $request): Response
     {
         $this->authorize($request, 'editor');
@@ -78,6 +78,8 @@ final class StockStyleController extends AdminController
             'color_code' => $s['color_code'],
             'color_hex' => $s['color_hex'],
             'thumbnail' => $s['thumbnail'] ?? null,
+            // The date added: the list is newest first.
+            'created_at' => $s['created_at'],
             'updated_at' => $s['updated_at'],
         ], $result['items']);
 

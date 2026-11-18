@@ -56,8 +56,9 @@ final class StockFromWholesale
 
     /**
      * Every color of the wholesale jeans for men and boys (styles shown or drafts, not archived), each with what its
-     * stock listing would be. A color is in the stock already when a stock color has its code or a listing has its
-     * web address (copied before, or made by hand); `problem` says why one cannot be copied.
+     * stock listing would be: the newest styles first, as in the shop, and each style's colors in staff order. A color
+     * is in the stock already when a stock color has its code or a listing has its web address (copied before, or made
+     * by hand); `problem` says why one cannot be copied.
      *
      * @return list<array<string, mixed>>
      */
@@ -76,7 +77,9 @@ final class StockFromWholesale
     public function copy(array $colorIds): array
     {
         $done = [];
-        foreach ($this->plans($colorIds) as $plan) {
+        // The last first: the stock lists the newest listings first, so the copies come out in the order they are
+        // listed here (the newest wholesale style first, its colors in order).
+        foreach (array_reverse($this->plans($colorIds)) as $plan) {
             if ($plan['stock_style_id'] === null && $plan['problem'] === null) {
                 $done[] = $this->copyListing($plan);
             } elseif ($plan['hidden_copy'] && $plan['show']) {
@@ -85,7 +88,7 @@ final class StockFromWholesale
             }
         }
 
-        return $done;
+        return array_reverse($done);
     }
 
     /**
@@ -105,7 +108,7 @@ final class StockFromWholesale
         }
         $rows = $this->db->fetchAll(
             "SELECT p.id AS product_id, c.id AS color_id FROM products p JOIN product_colors c ON c.product_id = p.id
-             WHERE {$where} ORDER BY p.sort_order, p.id, c.sort_order, c.id",
+             WHERE {$where} ORDER BY " . Product::NEWEST . ', c.sort_order, c.id',
             $params,
         );
         $productIds = array_values(array_unique(array_map(static fn (array $row): int => (int) $row['product_id'], $rows)));

@@ -15,7 +15,14 @@ final class Product
 {
     public const STATUSES = ['draft', 'active', 'archived'];
 
-    public const SORTS = ['featured', 'newest', 'price-asc', 'price-desc'];
+    /**
+     * The shop's orders: the newest styles first by default (owner request 2026-11-18: every list by date added), or
+     * featured first (then in staff order), or by price. Styles that tie come newest first.
+     */
+    public const SORTS = ['newest', 'featured', 'price-asc', 'price-desc'];
+
+    /** Newest first: by the date added, then by id (for styles added in the same second). */
+    public const NEWEST = 'p.created_at DESC, p.id DESC';
 
     /** Columns the admin may write. Specs beyond the shared columns (rise, neckline…) are kept in `attributes`. */
     public const FILLABLE = [
@@ -39,7 +46,7 @@ final class Product
     }
 
     /**
-     * Active styles for the shop.
+     * Active styles for the shop, in one of the SORTS (any other: the newest first).
      *
      * @param array{segment?: ?string, type?: ?string, fit?: ?string, stretch?: ?string, q?: ?string, featured?: ?bool, exclude?: ?int} $filters
      * @return array{items: list<array<string, mixed>>, total: int}
@@ -48,10 +55,10 @@ final class Product
     {
         [$where, $params] = self::filters($filters);
         $order = match ($sort) {
-            'newest' => 'p.created_at DESC, p.id DESC',
-            'price-asc' => 'r.price_min ASC, p.sort_order ASC, p.id ASC',
-            'price-desc' => 'r.price_min DESC, p.sort_order ASC, p.id ASC',
-            default => 'p.is_featured DESC, p.sort_order ASC, p.id ASC',
+            'featured' => 'p.is_featured DESC, p.sort_order ASC, ' . self::NEWEST,
+            'price-asc' => 'r.price_min ASC, ' . self::NEWEST,
+            'price-desc' => 'r.price_min DESC, ' . self::NEWEST,
+            default => self::NEWEST,
         };
         $from = 'FROM products p JOIN ' . self::PRICE_RANGE . " r ON r.product_id = p.id WHERE {$where}";
 
@@ -93,7 +100,7 @@ final class Product
 
     // ----- Admin -----
 
-    /** @return array{items: list<array<string, mixed>>, total: int} */
+    /** @return array{items: list<array<string, mixed>>, total: int} The newest styles first. */
     public function adminList(?string $status, ?string $search, int $page, int $perPage): array
     {
         $where = ['1 = 1'];
@@ -116,7 +123,7 @@ final class Product
                 (SELECT i.path FROM product_images i JOIN product_colors c ON c.id = i.color_id
                  WHERE i.product_id = p.id ORDER BY c.sort_order, c.id, i.sort_order, i.id LIMIT 1) AS thumbnail
              FROM products p WHERE {$condition}
-             ORDER BY p.segment, p.product_type, p.sort_order, p.id
+             ORDER BY " . self::NEWEST . "
              LIMIT " . (int) $perPage . ' OFFSET ' . (int) max(0, ($page - 1) * $perPage),
             $params,
         );

@@ -189,16 +189,16 @@ final class Catalog
     }
 
     /**
-     * Up to 4 other styles: same category first, then the same segment.
+     * Up to 4 other styles: same category first, then the same segment, the newest first.
      *
      * @param array<string, mixed> $product
      * @return list<array<string, mixed>>
      */
     private function related(array $product): array
     {
-        $related = $this->listing(['segment' => $product['segment'], 'type' => $product['product_type'], 'exclude' => $product['id']], 'featured', 1, 4)['items'];
+        $related = $this->listing(['segment' => $product['segment'], 'type' => $product['product_type'], 'exclude' => $product['id']], 'newest', 1, 4)['items'];
         if (count($related) < 4) {
-            $more = $this->listing(['segment' => $product['segment'], 'exclude' => $product['id']], 'featured', 1, 8)['items'];
+            $more = $this->listing(['segment' => $product['segment'], 'exclude' => $product['id']], 'newest', 1, 8)['items'];
             $seen = array_column($related, 'slug');
             foreach ($more as $item) {
                 if (count($related) >= 4) {

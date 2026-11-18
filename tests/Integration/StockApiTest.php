@@ -283,6 +283,11 @@ final class StockApiTest extends IntegrationTestCase
         $style = $this->admin('GET', "/v1/admin/stock/styles/{$applied['listings'][0]['id']}")->decoded()['data'];
         self::assertSame(['test-stock-import-slim-black', 'draft', 'Slim', 'Own label', 5], [$style['slug'], $style['status'], $style['specs']['fit'], $style['specs']['label'], $style['sets_in_stock']]);
         self::assertSame('Stock when the listing was imported', $this->admin('GET', '/v1/admin/stock/movements', ['style_id' => $style['id']])->decoded()['data'][0]['note']);
+        self::assertSame(
+            ['test-stock-import-slim-black', 'test-stock-import-straight-mid-blue'],
+            array_column($this->admin('GET', '/v1/admin/stock/styles', ['q' => 'Test stock import'])->decoded()['data'], 'slug'),
+            'Listed newest first, in the order of the file',
+        );
         $boys = $this->admin('GET', "/v1/admin/stock/styles/{$applied['listings'][1]['id']}")->decoded()['data'];
         self::assertSame(['boys', 'cotton-pants', 'Peach finish'], [$boys['segment'], $boys['category'], $boys['specs']['wash']], 'The Finish of cotton pants');
         self::assertSame(['Boys', 'Cotton pants'], [$applied['listings'][1]['department_name'], $applied['listings'][1]['category_name']]);
@@ -343,6 +348,11 @@ final class StockApiTest extends IntegrationTestCase
         self::assertSame(
             [[$rinseId, 'Rinse', 1, true, true], [$blackId, 'Black', 1, true, true]],
             array_map(static fn (array $c): array => [$c['color_id'], $c['color'], $c['photos'], $c['new'], $c['shown']], $copied),
+        );
+        self::assertSame(
+            ['test-stock-straight-jeans-rinse', 'test-stock-straight-jeans-black'],
+            array_column($this->admin('GET', '/v1/admin/stock/styles', ['q' => 'Test stock men'])->decoded()['data'], 'slug'),
+            'Listed newest first, in the wholesale order of the colors',
         );
         $listing = $this->admin('GET', "/v1/admin/stock/styles/{$copied[0]['stock_style_id']}")->decoded()['data'];
         $blackListing = $this->admin('GET', "/v1/admin/stock/styles/{$copied[1]['stock_style_id']}")->decoded()['data'];
@@ -610,6 +620,57 @@ final class StockApiTest extends IntegrationTestCase
             '/stock/men/test-stock-slim-jeans-2',
             $this->db->fetchValue('SELECT to_path FROM redirects WHERE from_path = ?', ['/stock/men/test-stock-slim-jeans']),
         );
+    }
+
+    /**
+     * Every list shows the newest first, by the date added (owner request 2026-11-18): the wholesale shop, its admin
+     * list, the stock pages (those in stock first) and the stock admin list.
+     */
+    public function testListsShowTheNewestFirst(): void
+    {
+        // Added on these dates, in another order than their ids: the dates decide.
+        $added = ['a' => '2026-11-10 09:00:00', 'b' => '2026-09-01 09:00:00', 'c' => '2026-10-05 09:00:00'];
+        $prices = ['a' => 600, 'b' => 600, 'c' => 500];
+        foreach ($added as $key => $date) {
+            $input = [
+                'name' => "Test stock order {$key} jeans", 'slug' => "test-stock-order-{$key}", 'segment' => 'men', 'product_type' => 'jeans-pant',
+                'sizes' => ['30', '32'], 'price_cents' => $prices[$key], 'is_featured' => $key === 'b',
+            ];
+            $id = $this->admin('POST', '/v1/admin/products', $input)->decoded()['data']['id'];
+            $color = $this->admin('POST', "/v1/admin/products/{$id}/colors", [
+                'code' => "TEST-ORD-{$key}", 'name' => 'Rinse', 'images' => [['path' => $this->upload('products'), 'alt' => 'Test jeans, front']],
+            ]);
+            self::assertSame(201, $color->status(), (string) $color->body());
+            self::assertSame(200, $this->admin('PUT', "/v1/admin/products/{$id}", ['status' => 'active'] + $input)->status());
+            $this->db->execute('UPDATE products SET created_at = ? WHERE id = ?', [$date, $id]);
+        }
+        $shop = fn (array $query): array => array_column($this->send('GET', '/v1/products', ['q' => 'Test stock order'] + $query)->decoded()['data'], 'slug');
+        self::assertSame(['test-stock-order-a', 'test-stock-order-c', 'test-stock-order-b'], $shop([]), 'The newest first');
+        self::assertSame(['test-stock-order-b', 'test-stock-order-a', 'test-stock-order-c'], $shop(['sort' => 'featured']), 'Featured first, then the newest');
+        self::assertSame(['test-stock-order-c', 'test-stock-order-a', 'test-stock-order-b'], $shop(['sort' => 'price-asc']), 'The same price: the newest first');
+        $related = array_column($this->send('GET', '/v1/products/test-stock-order-b')->decoded()['data']['related'], 'slug');
+        self::assertSame(['test-stock-order-a', 'test-stock-order-c'], array_values(array_filter($related, static fn (string $slug): bool => str_starts_with($slug, 'test-stock-order'))));
+        $admin = $this->admin('GET', '/v1/admin/products', ['q' => 'Test stock order'])->decoded()['data'];
+        self::assertSame(['test-stock-order-a', 'test-stock-order-c', 'test-stock-order-b'], array_column($admin, 'slug'));
+        self::assertSame('2026-11-10T09:00:00+00:00', $admin[0]['created_at'], 'With the date added');
+
+        // The stock: those in stock first, the newest first in each; the admin list by date only.
+        $added = ['a' => '2026-11-12 09:00:00', 'b' => '2026-09-03 09:00:00', 'c' => '2026-10-07 09:00:00'];
+        $sets = ['a' => 0, 'b' => 4, 'c' => 2];
+        foreach ($added as $key => $date) {
+            $style = $this->admin('POST', '/v1/admin/stock/styles', [
+                'name' => "Test stock order {$key} jeans", 'slug' => "test-stock-order-{$key}", 'is_featured' => $key === 'b', 'sort_order' => 5,
+                'color' => ['name' => 'Rinse', 'code' => "TEST-SORD-{$key}", 'sets_in_stock' => $sets[$key], 'images' => [['path' => $this->upload(), 'alt' => 'Test stock jeans, front']]],
+            ] + $this->styleInput());
+            self::assertSame([201, 'active'], [$style->status(), $style->decoded()['data']['status'] ?? null], (string) $style->body());
+            $this->db->execute('UPDATE stock_styles SET created_at = ? WHERE id = ?', [$date, $style->decoded()['data']['id']]);
+        }
+        $cards = array_values(array_filter($this->send('GET', '/v1/stock/styles')->decoded()['data'], static fn (array $card): bool => str_starts_with($card['slug'], 'test-stock-order')));
+        self::assertSame(['test-stock-order-c', 'test-stock-order-b', 'test-stock-order-a'], array_column($cards, 'slug'), 'In stock first, the newest first');
+        self::assertSame([true, 5], [$cards[1]['is_featured'], $cards[1]['sort_order']], 'For the website\'s "Featured" order');
+        $listings = $this->admin('GET', '/v1/admin/stock/styles', ['q' => 'Test stock order'])->decoded()['data'];
+        self::assertSame(['test-stock-order-a', 'test-stock-order-c', 'test-stock-order-b'], array_column($listings, 'slug'));
+        self::assertSame('2026-11-12T09:00:00+00:00', $listings[0]['created_at']);
     }
 
     /** @return array<string, mixed> */

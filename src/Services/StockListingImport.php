@@ -188,7 +188,8 @@ final class StockListingImport
         if ($apply && $result['errors'] === []) {
             $ids = $this->db->transaction(function () use ($listings, $staffId): array {
                 $ids = [];
-                foreach ($listings as $listing) {
+                // The last line first: the stock lists the newest listings first, so they come out in the file's order.
+                foreach (array_reverse($listings, true) as $index => $listing) {
                     $id = $this->styles->create([
                         'slug' => $listing['slug'],
                         'name' => $listing['name'],
@@ -209,7 +210,7 @@ final class StockListingImport
                     if ($listing['sets_in_stock'] > 0) {
                         $this->levels->change($colorId, 'received', $listing['sets_in_stock'], 'Stock when the listing was imported', $staffId);
                     }
-                    $ids[] = $id;
+                    $ids[$index] = $id;
                 }
 
                 return $ids;

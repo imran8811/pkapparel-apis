@@ -23,7 +23,7 @@ final class ShopController
     ) {
     }
 
-    /** GET /v1/products?segment=men&type=jeans-pant&fit=&stretch=&q=&featured=1&sort=featured&page=1&per_page=24 */
+    /** GET /v1/products?segment=men&type=jeans-pant&fit=&stretch=&q=&featured=1&sort=newest&page=1&per_page=24 (newest first by default) */
     public function products(Request $request): Response
     {
         $query = Validator::make($request->allQuery(), [
@@ -40,7 +40,7 @@ final class ShopController
         $page = $query['page'] ?? 1;
         $perPage = $query['per_page'] ?? 24;
 
-        $result = $this->catalog->listing($query, $query['sort'] ?? 'featured', $page, $perPage);
+        $result = $this->catalog->listing($query, $query['sort'] ?? 'newest', $page, $perPage);
 
         return Response::data($result['items'], [
             'pagination' => ['page' => $page, 'per_page' => $perPage, 'total' => $result['total'], 'pages' => (int) ceil($result['total'] / $perPage)],

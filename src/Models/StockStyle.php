@@ -39,6 +39,12 @@ final class StockStyle
 
     public const MAX_PCS_PER_SIZE = 24;
 
+    /**
+     * Lists show the newest listings first (owner request 2026-11-18: every list by date added): by the date added,
+     * then by id (for listings added in the same second).
+     */
+    public const NEWEST = 's.created_at DESC, s.id DESC';
+
     private const FILLABLE = [
         'slug', 'name', 'style_no', 'segment', 'category', 'specs', 'description_html', 'set_sizes', 'piece_price_cents',
         'set_price_cents', 'seo_title', 'seo_description', 'status', 'is_featured', 'sort_order',
@@ -60,7 +66,7 @@ final class StockStyle
     }
 
     /**
-     * Active styles with at least one active color, featured first, for the stock pages.
+     * Active styles with at least one active color, the newest first, for the stock pages.
      *
      * @return list<array<string, mixed>>
      */
@@ -76,7 +82,7 @@ final class StockStyle
             $where .= ' AND s.category = ?';
             $params[] = $category;
         }
-        $rows = $this->db->fetchAll(self::SELECT . " WHERE {$where} ORDER BY s.is_featured DESC, s.sort_order, s.id", $params);
+        $rows = $this->db->fetchAll(self::SELECT . " WHERE {$where} ORDER BY " . self::NEWEST, $params);
 
         return array_map([self::class, 'decode'], $rows);
     }
@@ -92,7 +98,7 @@ final class StockStyle
     // ----- Admin -----
 
     /**
-     * Listings in their department's, then their category's, staff order.
+     * Listings, the newest first.
      *
      * @return array{items: list<array<string, mixed>>, total: int}
      */
@@ -133,7 +139,7 @@ final class StockStyle
              LEFT JOIN stock_departments d ON d.slug = s.segment
              LEFT JOIN stock_categories k ON k.slug = s.category
              WHERE {$condition}
-             ORDER BY d.sort_order, s.segment, k.sort_order, s.category, s.sort_order, s.id
+             ORDER BY " . self::NEWEST . "
              LIMIT " . (int) $perPage . ' OFFSET ' . (int) max(0, ($page - 1) * $perPage),
             $params,
         );

@@ -22,7 +22,7 @@ final class StockController
     ) {
     }
 
-    /** GET /v1/stock/styles?segment=men&category=jeans: every style shown, in stock first (the website filters and sorts them). */
+    /** GET /v1/stock/styles?segment=men&category=jeans: every style shown, in stock first, the newest first (the website filters and sorts them). */
     public function styles(Request $request): Response
     {
         $query = Validator::make($request->allQuery(), [
