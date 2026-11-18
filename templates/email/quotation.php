@@ -13,6 +13,7 @@ $greeting = $buyer['contact_name'] ?? null;
 $styles = $quotation['styles'];
 $shown = array_slice($styles, 0, 20);
 $count = count($styles);
+$shipping = $quotation['shipping_cents'];
 $facts = array_filter([
     'Quotation' => $quotation['quotation_no'],
     'Date' => Format::date($quotation['issue_date']),
@@ -60,10 +61,16 @@ $facts = array_filter([
   <?php if ($count > count($shown)): ?>
     <tr><td colspan="2" style="padding:7px 8px;color:#5c6170;font-size:13px;">And <?= $count - count($shown) ?> more in the PDF.</td></tr>
   <?php endif; ?>
+  <?php if ($shipping > 0): ?>
+    <tr>
+      <td style="padding:7px 8px;border-bottom:1px solid #ebe6dc;font-size:14px;">Shipping for the whole order</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #ebe6dc;font-size:14px;text-align:right;white-space:nowrap;"><?= $e($money($shipping)) ?></td>
+    </tr>
+  <?php endif; ?>
   <?php if ($quotation['total_qty'] > 0): ?>
     <tr>
-      <td style="padding:8px;font-size:14px;"><strong>Total for <?= number_format($quotation['total_qty']) ?> pcs</strong></td>
-      <td style="padding:8px;font-size:14px;text-align:right;white-space:nowrap;"><strong><?= $e($money($quotation['total_cents'])) ?></strong></td>
+      <td style="padding:8px;font-size:14px;"><strong>Total for <?= number_format($quotation['total_qty']) ?> pcs<?= $shipping > 0 ? ', with shipping' : '' ?></strong></td>
+      <td style="padding:8px;font-size:14px;text-align:right;white-space:nowrap;"><strong><?= $e($money($quotation['grand_total_cents'])) ?></strong></td>
     </tr>
   <?php endif; ?>
 </table>

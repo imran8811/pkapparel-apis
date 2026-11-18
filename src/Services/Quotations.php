@@ -24,6 +24,9 @@ use App\Models\Settings;
  *   price  = cost + profit, quoted in rupees (rounded to the rupee), or in US dollars, euros or pounds at the exchange
  *            rate typed in (rupees for 1 unit; rounded to the cent)
  *
+ * A shipping charge for the whole order (in the quotation's currency) can be added: its own line, on top of the
+ * styles' total, never in the prices per piece.
+ *
  * The buyer's PDF shows the prices only; the costing sheet shows staff how each price was made. A quotation can be
  * edited while it is open: an accepted or declined one is reopened first. The numbers count up per year.
  */
@@ -55,6 +58,9 @@ final class Quotations
 
     /** A price per piece: up to Rs 10,000,000 (the columns hold more). */
     private const MAX_PRICE_CENTS = 1_000_000_000;
+
+    /** The shipping charge, in the quotation's currency: up to 40 million. */
+    private const MAX_SHIPPING_CENTS = 4_000_000_000;
 
     public function __construct(
         private readonly Quotation $quotations,
@@ -253,6 +259,8 @@ final class Quotations
         };
 
         return $quotation + [
+            // The styles with a quantity plus the shipping: what the buyer pays for the order.
+            'grand_total_cents' => $quotation['total_cents'] + $quotation['shipping_cents'],
             'status_label' => Quotation::STATUSES[$quotation['status']] ?? $quotation['status'],
             'stage' => $stage,
             'stage_label' => self::STAGES[$stage],
@@ -322,6 +330,7 @@ final class Quotations
             'buyer_reference' => 'nullable|string|max:60',
             'incoterm' => 'nullable|in:' . implode(',', Invoices::INCOTERMS),
             'delivery_time' => 'nullable|string|max:160',
+            'shipping_cents' => 'nullable|int|min:0|max:' . self::MAX_SHIPPING_CENTS,
             'notes' => 'nullable|string|max:2000',
             'terms' => 'nullable|string|max:3000',
             'staff_notes' => 'nullable|string|max:2000',
@@ -349,7 +358,9 @@ final class Quotations
         if ($inquiryId !== null && $this->inquiries->find($inquiryId) === null) {
             $errors['inquiry_id'] = 'This inquiry no longer exists.';
         }
-        if (isset($data['issue_date'], $data['valid_until']) && $data['valid_until'] < $data['issue_date']) {
+        // Read from the input too, so this shows together with mistakes in other fields.
+        $date = static fn (string $key): ?string => is_string($input[$key] ?? null) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $input[$key]) === 1 ? $input[$key] : null;
+        if (!isset($errors['valid_until']) && $date('issue_date') !== null && $date('valid_until') !== null && $date('valid_until') < $date('issue_date')) {
             $errors['valid_until'] = 'The validity date cannot be before the quotation date.';
         }
         if ($errors !== []) {
@@ -372,6 +383,7 @@ final class Quotations
             'delivery_time' => $text('delivery_time'),
             'total_qty' => array_sum(array_column($quantities, 'qty')),
             'total_cents' => array_sum(array_column($quantities, 'amount_cents')),
+            'shipping_cents' => (int) ($data['shipping_cents'] ?? 0),
             'notes' => $text('notes'),
             'terms' => $text('terms'),
             'staff_notes' => $text('staff_notes'),

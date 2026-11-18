@@ -18,7 +18,7 @@ final class Quotation
     /** Columns the service writes (everything except the id, number, status and the dates it manages). */
     private const FILLABLE = [
         'customer_id', 'inquiry_id', 'buyer', 'currency', 'exchange_rate', 'issue_date', 'valid_until', 'buyer_reference',
-        'incoterm', 'delivery_time', 'total_qty', 'total_cents', 'notes', 'terms', 'staff_notes',
+        'incoterm', 'delivery_time', 'total_qty', 'total_cents', 'shipping_cents', 'notes', 'terms', 'staff_notes',
     ];
 
     /** A style's columns, in the order the service returns them. */
@@ -269,6 +269,8 @@ final class Quotation
             'delivery_time' => $row['delivery_time'],
             'total_qty' => (int) $row['total_qty'],
             'total_cents' => (int) $row['total_cents'],
+            // The shipping charge for the whole order, on top of the styles (0: none).
+            'shipping_cents' => (int) ($row['shipping_cents'] ?? 0),
             'notes' => $row['notes'],
             'terms' => $row['terms'],
             'staff_notes' => $row['staff_notes'],

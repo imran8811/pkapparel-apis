@@ -15,6 +15,7 @@ $rupees = static fn (int $cents): string => Format::money($cents, 'PKR');
 $quoted = static fn (int $cents): string => Format::money($cents, $currency);
 $styles = $quotation['styles'];
 $hasQty = $quotation['total_qty'] > 0;
+$shipping = $quotation['shipping_cents'];
 $sellerName = trim((string) ($company['legal_name'] ?? '')) !== '' ? $company['legal_name'] : ($company['name'] ?? 'PK Apparel');
 $buyer = $quotation['buyer'];
 $buyerName = $buyer['company'] ?? $buyer['contact_name'] ?? '';
@@ -99,7 +100,7 @@ $percentOf = static fn (int $part, int $whole): string => $whole > 0 ? rtrim(rtr
     <td style="width: 14%;"><div class="label">Date</div><div class="value"><?= $e(Format::date($quotation['issue_date'])) ?></div></td>
     <td style="width: 14%;"><div class="label">Valid until</div><div class="value"><?= $e($quotation['valid_until'] !== null ? Format::date($quotation['valid_until']) : '—') ?></div></td>
     <td style="width: 16%;"><div class="label">Their reference</div><div class="value"><?= $e($quotation['buyer_reference'] ?: '—') ?></div></td>
-    <td><div class="label"><?= $hasQty ? 'Total for ' . number_format($quotation['total_qty']) . ' pcs' : 'Styles' ?></div><div class="value"><?= $hasQty ? $e($quoted($quotation['total_cents'])) : count($styles) ?></div></td>
+    <td><div class="label"><?= $hasQty ? 'Total for ' . number_format($quotation['total_qty']) . ' pcs' . ($shipping > 0 ? ' + shipping' : '') : 'Styles' ?></div><div class="value"><?= $hasQty ? $e($quoted($quotation['grand_total_cents'])) : count($styles) ?></div></td>
   </tr>
 </table>
 
@@ -211,6 +212,7 @@ $percentOf = static fn (int $part, int $whole): string => $whole > 0 ? rtrim(rtr
       <?php endif; ?>
     </td>
     <td class="muted" style="text-align: right;">
+      <?php if ($shipping > 0): ?><strong style="color: #0b132b;">Shipping: <?= $e($quoted($shipping)) ?> for the whole order</strong>, on top of the prices per piece<?= $hasQty ? ' (in the total above)' : '' ?>.<br><?php endif; ?>
       <?= $quotation['created_by'] ? 'Made by ' . $e($quotation['created_by']) . ' · ' : '' ?>Printed <?= $e(Format::date(gmdate(DATE_ATOM))) ?>
       <br>Fabric cost = rate × consumption. Profit is on the total cost. Prices in <?= $isRupees ? 'rupees are rounded to the rupee' : $e($currency) . ' are the rupee price ÷ the exchange rate, to the cent' ?>.
     </td>

@@ -1,7 +1,7 @@
 <?php
 /**
  * A quotation made in Admin → Quotations, for the buyer: each style with its price per piece, never the costs or the
- * profit (those are on the costing sheet, for staff). A4, rendered by dompdf: tables for layout (no flexbox or grid),
+ * profit (those are on the costing sheet, for staff). A shipping charge is its own line, added to the total. A4, rendered by dompdf: tables for layout (no flexbox or grid),
  * DejaVu Sans for full Unicode (€, £, —).
  * Variables: $quotation (Quotations::present), $company, $contact, $addresses (settings), $website
  * ("www.pkapparel.com"), $pages (page count, for the footer), $logo (data URI), $e (escaper).
@@ -14,6 +14,7 @@ $money = static fn (int $cents): string => Format::money($cents, $currency);
 $styles = $quotation['styles'];
 $buyer = $quotation['buyer'];
 $hasQty = $quotation['total_qty'] > 0;
+$shipping = $quotation['shipping_cents'];
 $isAccepted = $quotation['status'] === 'accepted';
 $currencyName = ['USD' => 'US dollars', 'EUR' => 'euros', 'GBP' => 'pounds sterling', 'PKR' => 'Pakistani rupees'][$currency] ?? $currency;
 
@@ -98,6 +99,9 @@ $termLines = array_values(array_filter(array_map('trim', preg_split('/\R/', (str
   .styles .spec strong { color: #3d4252; }
   .styles .price { font-size: 10px; font-weight: bold; }
   .styles tfoot td { border-bottom: none; border-top: 1.5px solid #0b132b; font-weight: bold; padding-top: 6px; }
+  .styles tfoot tr.sub td { font-weight: normal; border-top: none; padding-top: 3px; padding-bottom: 3px; }
+  .styles tfoot tr.sub.first td { border-top: 1.5px solid #0b132b; padding-top: 6px; }
+  .styles tfoot tr.grand td { border-top: 1px solid #0b132b; font-size: 10px; }
 
   h3 { font-size: 7px; letter-spacing: 1.2px; text-transform: uppercase; color: #5c6170; margin: 0 0 5px; }
   .note { background: #fbfaf7; border-left: 3px solid #0048ac; padding: 6px 9px; }
@@ -165,7 +169,7 @@ $termLines = array_values(array_filter(array_map('trim', preg_split('/\R/', (str
     </td>
     <td class="lead">
       <?php if ($hasQty): ?>
-        <div class="label">Total for <?= number_format($quotation['total_qty']) ?> pcs</div><div class="value"><?= $e($money($quotation['total_cents'])) ?></div>
+        <div class="label">Total for <?= number_format($quotation['total_qty']) ?> pcs<?= $shipping > 0 ? ' + shipping' : '' ?></div><div class="value"><?= $e($money($quotation['grand_total_cents'])) ?></div>
       <?php else: ?>
         <div class="label">Prices per piece in</div><div class="value"><?= $e($currency) ?></div>
       <?php endif; ?>
@@ -189,6 +193,7 @@ $termLines = array_values(array_filter(array_map('trim', preg_split('/\R/', (str
           <tr><td class="k">Prices</td><td>Per piece, in <?= $e($currencyName) ?> (<?= $e($currency) ?>)</td></tr>
           <?php if ($quotation['incoterm']): ?><tr><td class="k">Incoterm</td><td><?= $e($quotation['incoterm']) ?></td></tr><?php endif; ?>
           <?php if ($quotation['delivery_time']): ?><tr><td class="k">Delivery</td><td><?= $e($quotation['delivery_time']) ?></td></tr><?php endif; ?>
+          <?php if ($shipping > 0): ?><tr><td class="k">Shipping</td><td><?= $e($money($shipping)) ?> for the whole order, on top of the prices per piece</td></tr><?php endif; ?>
           <tr><td class="k">Origin</td><td><?= $e($company['country'] ?? 'Pakistan') ?></td></tr>
         </table>
       </div>
@@ -236,7 +241,31 @@ $termLines = array_values(array_filter(array_map('trim', preg_split('/\R/', (str
       </tr>
     <?php endforeach; ?>
   </tbody>
-  <?php if ($hasQty && count($styles) > 1): ?>
+  <?php if ($hasQty && $shipping > 0): ?>
+    <tfoot>
+      <tr class="sub first">
+        <td></td>
+        <td>Styles</td>
+        <td class="num"><?= number_format($quotation['total_qty']) ?> <span class="muted">pcs</span></td>
+        <td></td>
+        <td class="num"><?= $e($money($quotation['total_cents'])) ?></td>
+      </tr>
+      <tr class="sub">
+        <td></td>
+        <td>Shipping</td>
+        <td></td>
+        <td></td>
+        <td class="num"><?= $e($money($shipping)) ?></td>
+      </tr>
+      <tr class="grand">
+        <td></td>
+        <td>Total</td>
+        <td></td>
+        <td></td>
+        <td class="num"><?= $e($money($quotation['grand_total_cents'])) ?></td>
+      </tr>
+    </tfoot>
+  <?php elseif ($hasQty && count($styles) > 1): ?>
     <tfoot>
       <tr>
         <td></td>
@@ -244,6 +273,14 @@ $termLines = array_values(array_filter(array_map('trim', preg_split('/\R/', (str
         <td class="num"><?= number_format($quotation['total_qty']) ?> <span class="muted">pcs</span></td>
         <td></td>
         <td class="num"><?= $e($money($quotation['total_cents'])) ?></td>
+      </tr>
+    </tfoot>
+  <?php elseif ($shipping > 0): ?>
+    <tfoot>
+      <tr>
+        <td></td>
+        <td>Shipping for the whole order</td>
+        <td class="num"><?= $e($money($shipping)) ?></td>
       </tr>
     </tfoot>
   <?php endif; ?>
