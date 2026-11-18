@@ -11,7 +11,8 @@ use Dompdf\Options;
 
 /**
  * The PDFs, made with dompdf from templates/pdf: the order's proforma invoice (the order number is the PI number),
- * balance invoice and payment receipts, made from the order's frozen data, and the invoices staff make in the admin.
+ * balance invoice and payment receipts, made from the order's frozen data, and the invoices and quotations staff
+ * make in the admin.
  */
 final class OrderPdfs
 {
@@ -77,6 +78,27 @@ final class OrderPdfs
         return (string) $pdf->output();
     }
 
+    /**
+     * A quotation made in Admin → Quotations, for the buyer: each style with its price per piece (never the costs).
+     *
+     * @param array<string, mixed> $quotation presented quotation (Quotations::present)
+     */
+    public function quotation(array $quotation): string
+    {
+        return $this->withPageCount('quotation', ['quotation' => $quotation], 'Quotation ' . $quotation['quotation_no']);
+    }
+
+    /**
+     * The quotation's costing sheet, for staff: how each style's price was made (fabric, costs, profit), styles side
+     * by side. A4 landscape.
+     *
+     * @param array<string, mixed> $quotation presented quotation (Quotations::present)
+     */
+    public function costingSheet(array $quotation): string
+    {
+        return $this->withPageCount('costing-sheet', ['quotation' => $quotation], 'Costing sheet ' . $quotation['quotation_no'], 'landscape');
+    }
+
     /** "PI-PK-261016-482.pdf", or "Sample-invoice-PK-261016-482.pdf" for a sample order. */
     public static function proformaFilename(string $orderNo, string $kind = 'bulk'): string
     {
@@ -99,8 +121,25 @@ final class OrderPdfs
         return (string) $this->dompdf($template, $data, $title)->output();
     }
 
+    /**
+     * For a footer that says "Page 1 of 2": dompdf cannot count the pages in CSS, so a document longer than a page is
+     * made again with its page count ($pages in the template).
+     *
+     * @param array<string, mixed> $data
+     */
+    private function withPageCount(string $template, array $data, string $title, string $orientation = 'portrait'): string
+    {
+        $pdf = $this->dompdf($template, $data + ['pages' => 1], $title, $orientation);
+        $pages = $pdf->getCanvas()->get_page_count();
+        if ($pages !== 1) {
+            $pdf = $this->dompdf($template, $data + ['pages' => $pages], $title, $orientation);
+        }
+
+        return (string) $pdf->output();
+    }
+
     /** @param array<string, mixed> $data */
-    private function dompdf(string $template, array $data, string $title): Dompdf
+    private function dompdf(string $template, array $data, string $title, string $orientation = 'portrait'): Dompdf
     {
         $templates = rtrim($this->config->string('paths.templates'), '/\\') . '/pdf';
         $cache = rtrim($this->config->string('paths.storage'), '/\\') . '/cache/dompdf';
@@ -126,7 +165,7 @@ final class OrderPdfs
 
         $pdf = new Dompdf($options);
         $pdf->loadHtml($html, 'UTF-8');
-        $pdf->setPaper('A4');
+        $pdf->setPaper('A4', $orientation);
         $pdf->addInfo('Title', $title);
         $pdf->addInfo('Author', 'PK Apparel');
         $pdf->render();

@@ -10,6 +10,7 @@ use App\Core\Format;
 /**
  * Running document numbers per type and year: RCPT-2026-00001, INV-2026-00001, and for the invoices staff make in
  * the admin SI-2026-00001 (sample) and PI-2026-00001 (proforma); their final invoices share the INV series.
+ * Quotations: QT-2026-00001.
  * The counter row is locked while the next number is taken, so two staff members can never get the same number.
  */
 final class DocumentNumbers
@@ -21,6 +22,9 @@ final class DocumentNumbers
     public const SAMPLE_INVOICE = 'SI';
 
     public const PROFORMA_INVOICE = 'PI';
+
+    /** Quotations staff make in Admin → Quotations. */
+    public const QUOTATION = 'QT';
 
     public function __construct(private readonly Database $db)
     {

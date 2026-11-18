@@ -256,6 +256,18 @@ return static function (Router $router): void {
             $router->post('/invoices/{id:\d+}/cancel', [Admin\InvoiceController::class, 'cancel']);
             $router->post('/invoices/{id:\d+}/duplicate', [Admin\InvoiceController::class, 'duplicate']);
 
+            // Quotations (sales staff and admins): costed per style, the buyer's PDF and the costing sheet.
+            $router->get('/quotations', [Admin\QuotationController::class, 'index']);
+            $router->post('/quotations', [Admin\QuotationController::class, 'store']);
+            $router->get('/quotations/defaults', [Admin\QuotationController::class, 'defaults']);
+            $router->get('/quotations/{id:\d+}', [Admin\QuotationController::class, 'show']);
+            $router->put('/quotations/{id:\d+}', [Admin\QuotationController::class, 'update']);
+            $router->get('/quotations/{id:\d+}/pdf', [Admin\QuotationController::class, 'pdf']);
+            $router->get('/quotations/{id:\d+}/costing', [Admin\QuotationController::class, 'costing']);
+            $router->post('/quotations/{id:\d+}/send', [Admin\QuotationController::class, 'send']);
+            $router->post('/quotations/{id:\d+}/status', [Admin\QuotationController::class, 'status']);
+            $router->post('/quotations/{id:\d+}/duplicate', [Admin\QuotationController::class, 'duplicate']);
+
             $router->get('/payments', [Admin\PaymentController::class, 'index']);
             $router->post('/payments/{id:\d+}/confirm', [Admin\PaymentController::class, 'confirm']);
             $router->post('/payments/{id:\d+}/reject', [Admin\PaymentController::class, 'reject']);

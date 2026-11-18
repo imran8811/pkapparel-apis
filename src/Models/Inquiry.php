@@ -143,6 +143,15 @@ final class Inquiry
         $this->db->update('inquiries', ['status' => $status, 'notes' => $notes, 'handled_by' => $staffId], ['id' => $id]);
     }
 
+    /** A quotation was emailed for it: "Quote sent", unless staff already moved it on (won, lost, closed…). */
+    public function markQuoted(int $id, int $staffId): void
+    {
+        $this->db->execute(
+            "UPDATE inquiries SET status = 'quoted', handled_by = COALESCE(handled_by, ?) WHERE id = ? AND status IN ('new', 'in_progress')",
+            [$staffId, $id],
+        );
+    }
+
     /** @return array<string, int> Number of inquiries per status (every status is present). */
     public function countByStatus(): array
     {

@@ -358,10 +358,10 @@ final class Invoices
         $data = $validator->passes() ? $validator->validate() : [];
         $errors += $validator->errors();
 
-        $buyer = $this->party(is_array($input['buyer'] ?? null) ? $input['buyer'] : [], 'buyer', $errors);
+        $buyer = self::party(is_array($input['buyer'] ?? null) ? $input['buyer'] : [], 'buyer', $errors);
         $consignee = null;
         if (is_array($input['consignee'] ?? null) && array_filter($input['consignee'], static fn (mixed $v): bool => is_string($v) && trim($v) !== '') !== []) {
-            $consignee = $this->party($input['consignee'], 'consignee', $errors);
+            $consignee = self::party($input['consignee'], 'consignee', $errors);
         }
         $lines = $this->lines($input['lines'] ?? null, $errors);
 
@@ -420,13 +420,13 @@ final class Invoices
     }
 
     /**
-     * The buyer or the consignee. Errors are keyed "buyer.company", "consignee.address"…
+     * The buyer or the consignee. Errors are keyed "buyer.company", "consignee.address"… (also used by Quotations).
      *
      * @param array<string, mixed> $input
      * @param array<string, string> $errors
      * @return array<string, ?string>
      */
-    private function party(array $input, string $prefix, array &$errors): array
+    public static function party(array $input, string $prefix, array &$errors): array
     {
         $validator = Validator::make($input, [
             'company' => 'nullable|string|max:160',
@@ -516,11 +516,11 @@ final class Invoices
     }
 
     /**
-     * "a@x.com, b@y.com" or a list → up to 5 distinct, valid addresses.
+     * "a@x.com, b@y.com" or a list → up to 5 distinct, valid addresses (also used by Quotations).
      *
      * @return list<string>
      */
-    private static function recipients(mixed $input): array
+    public static function recipients(mixed $input, string $document = 'invoice'): array
     {
         $parts = is_array($input) ? $input : preg_split('/[\s,;]+/', (string) $input);
         $emails = [];
@@ -535,7 +535,7 @@ final class Invoices
             $emails[$email] = true;
         }
         if ($emails === []) {
-            throw new ValidationException(['to' => 'Enter the email address to send the invoice to.']);
+            throw new ValidationException(['to' => "Enter the email address to send the {$document} to."]);
         }
         if (count($emails) > 5) {
             throw new ValidationException(['to' => 'Send to at most 5 addresses at once.']);

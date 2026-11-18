@@ -48,7 +48,7 @@ All of these run from this folder.
 - **New migrations:** in phpMyAdmin, open the database, then *Import* each new file from `database/migrations`, in number order.
   - If the database has a `schema_migrations` table, record each one on the *SQL* tab, so `bin/migrate.php` never applies it twice: `INSERT IGNORE INTO schema_migrations (version) VALUES ('0025_product_range');` (the file name without `.sql`).
   - Upload the new API files and import their migration together: the new code reads the new columns.
-  - `0026_stock`, `0027_stock_orders`, `0028_single_color_stock`, `0029_stock_piece_price`, `0032_stock_departments_categories` and `0033_style_no_in_web_addresses` only change what is missing, so importing them again is safe, for example after an import that stopped with an error.
+  - `0026_stock`, `0027_stock_orders`, `0028_single_color_stock`, `0029_stock_piece_price`, `0032_stock_departments_categories`, `0033_style_no_in_web_addresses` and `0034_quotations` only change what is missing, so importing them again is safe, for example after an import that stopped with an error.
   - `0033_style_no_in_web_addresses` adds the style no. to the end of existing web addresses (`mens-slim-jeans` → `mens-slim-jeans-1051`; shown ones keep their old address as a redirect). Before importing it, run the preview query written at the top of the file on the *SQL* tab: it lists every address that will change and changes nothing. After importing it, redeploy the website.
 - **Refreshing the website's cache:** a new website deployment rebuilds every page from the API, so it shows the new data. Vercel's *Redeploy* does the same when the website code has not changed.
 - **Any other `php bin/…` command** can run from cPanel's *Cron Jobs*: add a job for the next minute, wait for it, then delete it.
@@ -143,6 +143,21 @@ For buyers who order outside the website (e.g. samples agreed on WhatsApp). Sale
 - **The PDF** (`templates/pdf/invoice.php`, `GET …/{id}/pdf`) prints the company details from Settings (legal name, the first address with its post code, NTN, phone, email, website from `WEB_URL`), the amount in words, the bank account (the private `bank` setting) and the invoice number as the payment reference. Paid and cancelled invoices say so.
 - **Steps:** `POST …/{id}/send {to, message?}` emails the PDF with the bank details (up to 5 addresses; replies go to `MAIL_ADMIN_TO`); `…/paid {paid_on, payment_reference?}` and `…/unpaid`; `…/cancel`; `…/duplicate {type?}` starts a new invoice from this one (e.g. the proforma once the samples are approved). `GET …/defaults` gives the new-invoice form its terms, dates and whether the bank details are filled in.
 - **Editing:** an invoice can be changed until it is paid or cancelled; its type and number stay. Cancelled invoices keep their number, so the numbering has no gaps.
+
+### Quotations (`/v1/admin/quotations`)
+
+When a buyer sends artwork, sizes and colors and asks for prices (owner request 2026-11-18). Sales staff and admins; `App\Services\Quotations`, tables `quotations` and `quotation_styles` (migration `0034_quotations`), numbered `QT-2026-00001` per year in `document_sequences`.
+
+- **Styles:** one quotation holds up to 50 styles, each with its own inputs: the buyer's article no. and/or a description, fabric, colors, sizes, details and an optional quantity, then its costs per piece in rupees.
+- **Price per piece** (`Quotations::price`, in whole paisa; the admin form shows the same while staff type):
+  - fabric cost = fabric rate (per metre, yard or kg) × consumption per piece (up to 3 decimals), to the paisa. A CMT price leaves both empty;
+  - cost = fabric + cutting + stitching + washing + packing + printing + embroidery + accessories + overhead + extra (the extra cost can have a label);
+  - profit = a percentage of the cost (to the paisa) or an amount per piece;
+  - price = cost + profit, quoted in rupees to the rupee, or in USD, EUR or GBP at the exchange rate typed in (rupees for 1 unit; to the cent). A new quotation starts from the latest rate used per currency.
+  - The figures are stored when the quotation is saved, so a quotation keeps its prices.
+- **Two PDFs:** `GET …/{id}/pdf` is the buyer's quotation (`templates/pdf/quotation.php`): the styles with their price per piece and, where a quantity is given, the amount and total. It never shows the costs or the profit. `GET …/{id}/costing` is the costing sheet for staff (`templates/pdf/costing-sheet.php`, A4 landscape): the styles side by side with the fabric, every cost, the profit and the prices, plus the staff notes.
+- **Steps:** `POST …/{id}/send {to, message?}` emails the buyer's PDF (up to 5 addresses; replies go to `MAIL_ADMIN_TO`); a quotation made from a quote request (`inquiry_id`) moves that inquiry to "Quote sent". `…/status {status: open|accepted|declined}` records the buyer's answer; `…/duplicate` starts a revised quotation dated today. `GET …/defaults` gives the new-quotation form its dates, terms, delivery time and latest exchange rates.
+- **Editing:** while open (accepted and declined ones are reopened first); the number stays. Stages: not sent, sent, expired (open and past its validity date), accepted, declined.
 
 ### Quote requests, samples and reviews
 
