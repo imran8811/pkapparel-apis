@@ -35,6 +35,13 @@ final class QuotationPriceTest extends TestCase
         self::assertSame(0, Quotations::price(self::JEANS, 'USD', null)['unit_price_cents'], 'No rate, no price');
     }
 
+    public function testShippingIsAddedAfterTheProfit(): void
+    {
+        // Rs 30 of shipping per piece: the cost and the 15% profit stay the same, the price is Rs 30 more.
+        $price = Quotations::price(['shipping_cents' => 3000] + self::JEANS, 'PKR', null);
+        self::assertSame([114750, 149750, 22463, 175213, 175200], array_values($price));
+    }
+
     public function testProfitAsAnAmountAndRounding(): void
     {
         $style = ['profit_type' => 'amount', 'profit_cents' => 15000, 'fabric_consumption' => '2'] + self::JEANS;

@@ -82,17 +82,16 @@ final class QuotationApiTest extends IntegrationTestCase
         self::assertSame(1200 * 614, $jeans['amount_cents']);
         self::assertSame('1.35', $jeans['fabric_consumption']);
         self::assertSame('15', $jeans['profit_percent']);
-        // A CMT price (the buyer's own fabric) with Rs 120 profit per piece, and no quantity yet.
+        // A CMT price (the buyer's own fabric) with Rs 120 profit and Rs 25 shipping per piece, and no quantity yet.
         self::assertSame(0, $chino['fabric_cost_cents']);
         self::assertSame(43000, $chino['cost_cents']);
-        self::assertSame(55000, $chino['price_cents']);
-        self::assertSame(196, $chino['unit_price_cents'], 'Rs 550 ÷ 280.5 = $1.96');
+        self::assertSame(12000, $chino['profit_cents'], 'No profit on the shipping');
+        self::assertSame(2500, $chino['shipping_cents']);
+        self::assertSame(57500, $chino['price_cents']);
+        self::assertSame(205, $chino['unit_price_cents'], 'Rs 575 ÷ 280.5 = $2.05');
         self::assertNull($chino['amount_cents']);
         self::assertSame(1200, $quotation['total_qty'], 'Only the styles with a quantity count');
         self::assertSame(1200 * 614, $quotation['total_cents']);
-        // $850 of sea freight for the whole order: its own line, on top of the styles.
-        self::assertSame(85000, $quotation['shipping_cents']);
-        self::assertSame(1200 * 614 + 85000, $quotation['grand_total_cents']);
         self::assertSame('280.5', $quotation['exchange_rate']);
         $id = $quotation['id'];
 
@@ -109,11 +108,10 @@ final class QuotationApiTest extends IntegrationTestCase
         $rupees = $this->input();
         $rupees['currency'] = 'PKR';
         $rupees['exchange_rate'] = '';
-        $rupees['shipping_cents'] = 2500000;
         $updated = $this->send('PUT', "/v1/admin/quotations/{$id}", $rupees, $token)->decoded()['data'];
         self::assertSame(172200, $updated['styles'][0]['unit_price_cents']);
         self::assertNull($updated['exchange_rate']);
-        self::assertSame(1200 * 172200 + 2500000, $updated['grand_total_cents'], 'Rs 25,000 of cargo on top');
+        self::assertSame(57500, $updated['styles'][1]['unit_price_cents'], 'Rs 575, shipping included');
         self::assertSame($quotation['quotation_no'], $updated['quotation_no'], 'Editing keeps the number');
         self::assertNull($updated['inquiry'], 'Saved without the inquiry, the link goes');
 
@@ -128,8 +126,6 @@ final class QuotationApiTest extends IntegrationTestCase
         self::assertStringContainsString("Attachments: {$quotation['quotation_no']}.pdf (application/pdf", $mail);
         self::assertStringContainsString('As discussed on the phone.', $mail);
         self::assertStringNotContainsString('1,147.50', $mail, 'The buyer never sees the costs');
-        self::assertStringContainsString('Shipping for the whole order', $mail);
-        self::assertStringContainsString('$8,218.00', $mail, 'The total with the shipping: $7,368 + $850');
         self::assertSame('quoted', $this->db->fetchValue('SELECT status FROM inquiries WHERE id = ?', [$inquiryId]), 'The inquiry is now "Quote sent"');
         self::assertSame(422, $this->send('POST', "/v1/admin/quotations/{$id}/send", ['to' => 'nope'], $token)->status());
 
@@ -173,7 +169,7 @@ final class QuotationApiTest extends IntegrationTestCase
         $input['buyer'] = ['company' => '', 'contact_name' => '', 'country_code' => ''];
         $input['exchange_rate'] = '0';
         $input['valid_until'] = Format::local()->modify('-1 day')->format('Y-m-d');
-        $input['shipping_cents'] = -100;
+        $input['styles'][0]['shipping_cents'] = -100;
         $input['styles'][0]['fabric_consumption'] = '1.3456';
         $input['styles'][0]['profit_percent'] = 'lots';
         $input['styles'][1]['article_no'] = '';
@@ -182,7 +178,7 @@ final class QuotationApiTest extends IntegrationTestCase
         $response = $this->send('POST', '/v1/admin/quotations', $input, $token);
         self::assertSame(422, $response->status());
         $fields = $response->decoded()['error']['fields'];
-        foreach (['buyer.company', 'buyer.country_code', 'exchange_rate', 'valid_until', 'shipping_cents', 'styles.0.fabric_consumption', 'styles.0.profit_percent', 'styles.1.article_no', 'styles.1.fabric_consumption'] as $field) {
+        foreach (['buyer.company', 'buyer.country_code', 'exchange_rate', 'valid_until', 'styles.0.shipping_cents', 'styles.0.fabric_consumption', 'styles.0.profit_percent', 'styles.1.article_no', 'styles.1.fabric_consumption'] as $field) {
             self::assertArrayHasKey($field, $fields, $field . ' in ' . json_encode($fields));
         }
         self::assertStringContainsString('1.35', $fields['styles.0.fabric_consumption']);
@@ -219,7 +215,6 @@ final class QuotationApiTest extends IntegrationTestCase
             'buyer_reference' => 'RFQ-88',
             'incoterm' => 'FOB',
             'delivery_time' => 'About 45 days after the sample approval',
-            'shipping_cents' => 85000,
             'styles' => [
                 [
                     'article_no' => 'BER-5021', 'description' => "Men's slim fit 5-pocket jeans", 'fabric' => '12 oz 98/2 stretch denim', 'colors' => 'Indigo rinse', 'sizes' => '28-38', 'details' => '', 'qty' => 1200,
@@ -231,7 +226,7 @@ final class QuotationApiTest extends IntegrationTestCase
                     'article_no' => 'BER-7710', 'description' => 'Chino pant, CMT (buyer\'s fabric)', 'fabric' => '', 'colors' => 'Khaki, navy', 'sizes' => 'S-XL', 'details' => 'Fabric supplied by the buyer.', 'qty' => null,
                     'fabric_rate_cents' => 0, 'fabric_unit' => 'm', 'fabric_consumption' => '',
                     'cutting_cents' => 3000, 'stitching_cents' => 25000, 'washing_cents' => 0, 'packing_cents' => 2000, 'accessories_cents' => 8000, 'overhead_cents' => 5000,
-                    'profit_type' => 'amount', 'profit_cents' => 12000, 'extra_label' => '',
+                    'profit_type' => 'amount', 'profit_cents' => 12000, 'extra_label' => '', 'shipping_cents' => 2500,
                 ] + $none,
             ],
             'notes' => 'Prices for the first order.',

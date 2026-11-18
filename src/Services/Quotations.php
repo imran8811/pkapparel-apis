@@ -21,11 +21,8 @@ use App\Models\Settings;
  *   fabric = fabric rate × consumption per piece (metres, yards or kilograms)
  *   cost   = fabric + cutting + stitching + washing + packing + printing + embroidery + accessories + overhead + extra
  *   profit = a percentage of the cost, or an amount per piece
- *   price  = cost + profit, quoted in rupees (rounded to the rupee), or in US dollars, euros or pounds at the exchange
- *            rate typed in (rupees for 1 unit; rounded to the cent)
- *
- * A shipping charge for the whole order (in the quotation's currency) can be added: its own line, on top of the
- * styles' total, never in the prices per piece.
+ *   price  = cost + profit + shipping per piece (no profit on the shipping), quoted in rupees (rounded to the rupee),
+ *            or in US dollars, euros or pounds at the exchange rate typed in (rupees for 1 unit; rounded to the cent)
  *
  * The buyer's PDF shows the prices only; the costing sheet shows staff how each price was made. A quotation can be
  * edited while it is open: an accepted or declined one is reopened first. The numbers count up per year.
@@ -58,9 +55,6 @@ final class Quotations
 
     /** A price per piece: up to Rs 10,000,000 (the columns hold more). */
     private const MAX_PRICE_CENTS = 1_000_000_000;
-
-    /** The shipping charge, in the quotation's currency: up to 40 million. */
-    private const MAX_SHIPPING_CENTS = 4_000_000_000;
 
     public function __construct(
         private readonly Quotation $quotations,
@@ -259,8 +253,6 @@ final class Quotations
         };
 
         return $quotation + [
-            // The styles with a quantity plus the shipping: what the buyer pays for the order.
-            'grand_total_cents' => $quotation['total_cents'] + $quotation['shipping_cents'],
             'status_label' => Quotation::STATUSES[$quotation['status']] ?? $quotation['status'],
             'stage' => $stage,
             'stage_label' => self::STAGES[$stage],
@@ -270,10 +262,12 @@ final class Quotations
     /**
      * A style's prices, worked out in whole paisa and cents so the admin form shows exactly the same:
      * the fabric rounds to the paisa, a percentage profit to the paisa, a rupee price to the rupee and a price in
-     * another currency to the cent (halves up).
+     * another currency to the cent (halves up). The shipping per piece is added after the profit, so no profit is
+     * charged on it.
      *
      * @param array<string, mixed> $style fabric_rate_cents, fabric_consumption ("1.35"), the COSTS as {key}_cents,
-     *                                    profit_type (percent|amount), profit_percent ("15") or profit_cents
+     *                                    profit_type (percent|amount), profit_percent ("15") or profit_cents,
+     *                                    shipping_cents
      * @param string|null $exchangeRate rupees for 1 unit of $currency ("280.5"); unused for PKR
      * @return array{fabric_cost_cents: int, cost_cents: int, profit_cents: int, price_cents: int, unit_price_cents: int}
      */
@@ -287,7 +281,7 @@ final class Quotations
         $profit = ($style['profit_type'] ?? 'percent') === 'amount'
             ? (int) ($style['profit_cents'] ?? 0)
             : intdiv($cost * self::scaled((string) ($style['profit_percent'] ?? '0'), 2) + 5000, 10000);
-        $price = $cost + $profit;
+        $price = $cost + $profit + (int) ($style['shipping_cents'] ?? 0);
         if ($currency === 'PKR') {
             $unit = intdiv($price + 50, 100) * 100;
         } else {
@@ -330,7 +324,6 @@ final class Quotations
             'buyer_reference' => 'nullable|string|max:60',
             'incoterm' => 'nullable|in:' . implode(',', Invoices::INCOTERMS),
             'delivery_time' => 'nullable|string|max:160',
-            'shipping_cents' => 'nullable|int|min:0|max:' . self::MAX_SHIPPING_CENTS,
             'notes' => 'nullable|string|max:2000',
             'terms' => 'nullable|string|max:3000',
             'staff_notes' => 'nullable|string|max:2000',
@@ -383,7 +376,6 @@ final class Quotations
             'delivery_time' => $text('delivery_time'),
             'total_qty' => array_sum(array_column($quantities, 'qty')),
             'total_cents' => array_sum(array_column($quantities, 'amount_cents')),
-            'shipping_cents' => (int) ($data['shipping_cents'] ?? 0),
             'notes' => $text('notes'),
             'terms' => $text('terms'),
             'staff_notes' => $text('staff_notes'),
@@ -425,6 +417,7 @@ final class Quotations
             'profit_type' => 'required|in:percent,amount',
             'profit_percent' => ['nullable', 'string', 'regex:/^\d{1,3}(\.\d{1,2})?$/'],
             'profit_cents' => $money,
+            'shipping_cents' => $money,
         ];
         foreach (array_keys(self::COSTS) as $key) {
             $rules["{$key}_cents"] = $money;
@@ -465,6 +458,7 @@ final class Quotations
                 'profit_type' => (string) $data['profit_type'],
                 'profit_percent' => $data['profit_type'] === 'percent' ? ($text('profit_percent') ?? '0') : null,
                 'profit_cents' => (int) ($data['profit_cents'] ?? 0),
+                'shipping_cents' => (int) ($data['shipping_cents'] ?? 0),
             ];
             foreach (array_keys(self::COSTS) as $key) {
                 $style["{$key}_cents"] = (int) ($data["{$key}_cents"] ?? 0);

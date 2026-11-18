@@ -18,7 +18,7 @@ final class Quotation
     /** Columns the service writes (everything except the id, number, status and the dates it manages). */
     private const FILLABLE = [
         'customer_id', 'inquiry_id', 'buyer', 'currency', 'exchange_rate', 'issue_date', 'valid_until', 'buyer_reference',
-        'incoterm', 'delivery_time', 'total_qty', 'total_cents', 'shipping_cents', 'notes', 'terms', 'staff_notes',
+        'incoterm', 'delivery_time', 'total_qty', 'total_cents', 'notes', 'terms', 'staff_notes',
     ];
 
     /** A style's columns, in the order the service returns them. */
@@ -26,14 +26,14 @@ final class Quotation
         'article_no', 'description', 'fabric', 'colors', 'sizes', 'details', 'qty',
         'fabric_rate_cents', 'fabric_unit', 'fabric_consumption', 'fabric_cost_cents',
         'cutting_cents', 'stitching_cents', 'washing_cents', 'packing_cents', 'printing_cents', 'embroidery_cents',
-        'accessories_cents', 'overhead_cents', 'extra_cents', 'extra_label',
+        'accessories_cents', 'overhead_cents', 'extra_cents', 'extra_label', 'shipping_cents',
         'cost_cents', 'profit_type', 'profit_percent', 'profit_cents', 'price_cents', 'unit_price_cents', 'amount_cents',
     ];
 
     private const STYLE_INTS = [
         'fabric_rate_cents', 'fabric_cost_cents', 'cutting_cents', 'stitching_cents', 'washing_cents', 'packing_cents',
-        'printing_cents', 'embroidery_cents', 'accessories_cents', 'overhead_cents', 'extra_cents', 'cost_cents',
-        'profit_cents', 'price_cents', 'unit_price_cents',
+        'printing_cents', 'embroidery_cents', 'accessories_cents', 'overhead_cents', 'extra_cents', 'shipping_cents',
+        'cost_cents', 'profit_cents', 'price_cents', 'unit_price_cents',
     ];
 
     public function __construct(private readonly Database $db)
@@ -269,8 +269,6 @@ final class Quotation
             'delivery_time' => $row['delivery_time'],
             'total_qty' => (int) $row['total_qty'],
             'total_cents' => (int) $row['total_cents'],
-            // The shipping charge for the whole order, on top of the styles (0: none).
-            'shipping_cents' => (int) ($row['shipping_cents'] ?? 0),
             'notes' => $row['notes'],
             'terms' => $row['terms'],
             'staff_notes' => $row['staff_notes'],
