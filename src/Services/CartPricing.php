@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\Product;
 use App\Models\ProductColor;
+use App\Models\ProductTypes;
 
 /**
  * Prices cart lines from the live catalog and checks the order rules.
@@ -14,7 +15,8 @@ use App\Models\ProductColor;
  *   Tiers count every color of a style together, like on the product page.
  * - Each color must reach the style's minimum (MOQ), and every size ordered in a color needs the minimum per size
  *   (e.g. 20: 100 pieces of a color cover at most 5 sizes). Colors and styles no longer sold block checkout.
- * - Quantities for sizes a style no longer offers are left out (and reported).
+ * - Sizes the style does not list, which the buyer added (e.g. 38 for jeans listed in 26–36), are priced and counted
+ *   like the others, and come after the style's sizes, in size order.
  */
 final class CartPricing
 {
@@ -101,17 +103,7 @@ final class CartPricing
             if ($color === null) {
                 continue;
             }
-            $sizeQty = [];
-            foreach ($sizes as $size) {
-                $qty = (int) ($line['size_qty'][$size] ?? 0);
-                if ($qty > 0) {
-                    $sizeQty[$size] = $qty;
-                }
-            }
-            $dropped = array_values(array_diff(array_map('strval', array_keys(array_filter($line['size_qty']))), $sizes));
-            if ($dropped !== []) {
-                $issues[] = sprintf('%s no longer comes in size %s, so those pieces were left out.', $product['name'], implode(', ', $dropped));
-            }
+            $sizeQty = ProductTypes::sortSizeQty(array_filter($line['size_qty'], static fn (int $qty): bool => $qty > 0), $sizes);
             $entries[] = ['color' => $color, 'size_qty' => $sizeQty, 'pcs' => array_sum($sizeQty)];
         }
 
@@ -178,6 +170,7 @@ final class CartPricing
             'style_no' => $product['style_no'],
             'segment' => $product['segment'],
             'product_type' => $product['product_type'],
+            'size_system' => $product['size_system'],
             'sizes' => $sizes,
             'available' => $styleActive,
             'rules' => $rules,

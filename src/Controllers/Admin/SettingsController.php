@@ -192,7 +192,6 @@ final class SettingsController extends AdminController
     {
         $data = Validator::make($input, [
             'moq_per_color' => 'required|int|min:1|max:100000',
-            'set_pcs_per_size' => 'required|int|min:1|max:50',
             'min_pcs_per_size' => 'nullable|int|min:1|max:10000',
             'deposit_percent' => 'required|int|min:0|max:100',
             'lead_time_days' => 'required|int|min:1|max:365',
@@ -217,7 +216,6 @@ final class SettingsController extends AdminController
         return [
             'currency' => $current['currency'] ?? 'USD',
             'moq_per_color' => $data['moq_per_color'],
-            'set_pcs_per_size' => $data['set_pcs_per_size'],
             'min_pcs_per_size' => $data['min_pcs_per_size'] ?? $current['min_pcs_per_size'] ?? Commerce::MIN_PCS_PER_SIZE,
             'deposit_percent' => $data['deposit_percent'],
             'lead_time_days' => $data['lead_time_days'],

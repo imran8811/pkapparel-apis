@@ -261,6 +261,29 @@ final class ProductTypes
     }
 
     /**
+     * Pieces by size in size order: the style's sizes in its order, then the others (sizes a buyer added, or that the
+     * style no longer lists) in natural order, "38" before "40". MySQL keeps JSON keys in its own order (L, M, S), so
+     * quantities read back from the database are put in order with this.
+     *
+     * @param array<int|string, int> $sizeQty
+     * @param list<string> $listed the style's sizes
+     * @return array<string, int>
+     */
+    public static function sortSizeQty(array $sizeQty, array $listed): array
+    {
+        $sorted = [];
+        foreach ($listed as $size) {
+            if (array_key_exists((string) $size, $sizeQty)) {
+                $sorted[(string) $size] = $sizeQty[(string) $size];
+            }
+        }
+        $others = array_diff_key($sizeQty, $sorted);
+        uksort($others, static fn (int|string $a, int|string $b): int => strnatcasecmp((string) $a, (string) $b));
+
+        return $sorted + $others;
+    }
+
+    /**
      * A size as the system writes it ("xl" → "XL", "2XL" → "XXL", "W32" → "32"), or null when the system has no such size.
      * For "other", the trimmed text.
      */

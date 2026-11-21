@@ -24,8 +24,8 @@ use Throwable;
  * Jeans, chino pants into Cotton pants). Types no stock category has (cargo trousers…) are not offered.
  * Every stock listing is one color with its own details, so each wholesale color becomes a listing of its own, at
  * {style}-{color}: the style's name, style no., specs (with the color's own fabric details), the set (the wholesale
- * waist sizes with the wholesale set's pieces per size), the color and its photos. From then on a copy is separate from
- * the wholesale style: its photos are copied files, and neither shop changes the other.
+ * waist sizes, PCS_PER_SIZE pieces of each), the color and its photos. From then on a copy is separate from the
+ * wholesale style: its photos are copied files, and neither shop changes the other.
  *
  * A copy is shown on the stock pages straight away when the wholesale style and color are shown and the color has a
  * photo. It has no price ("Price on request", and it cannot be ordered online until staff enter one) and no sets in
@@ -36,6 +36,12 @@ use Throwable;
  */
 final class StockFromWholesale
 {
+    /**
+     * Pieces of each size in a copy's set. The wholesale shop has no sets (owner request 2026-11-21: its buyers enter
+     * the pieces of each size), so the copies use the stock's usual set; staff change a listing's set in its form.
+     */
+    public const PCS_PER_SIZE = 2;
+
     /** Text about the wholesale business, which the stock pages must not show. */
     private const WHOLESALE_WORDING = '/pakistan|wholesale|export|made[ -]to[ -]order|minimum order|\bmoq\b|pieces per colou?r|from \d+ pieces|private[ -]label|own (?:brand )?labels?|packaging|lead time|deposit|\bship(?:s|ped|ping)?\b|by air|by sea|freight|forwarder|tech pack|\bquotes?\b|\bsamples?\b/i';
 
@@ -43,7 +49,6 @@ final class StockFromWholesale
         private readonly Database $db,
         private readonly Product $products,
         private readonly ProductColor $productColors,
-        private readonly Catalog $catalog,
         private readonly StockStyle $styles,
         private readonly StockColor $colors,
         private readonly StockDepartment $departments,
@@ -140,7 +145,7 @@ final class StockFromWholesale
             $color = $colors[(int) $row['color_id']] ?? null;
             if (!array_key_exists($productId, $shared)) {
                 $product = $this->products->find($productId);
-                $shared[$productId] = $product === null ? null : ['product' => $product, 'sizes' => $this->setSizes($product)]
+                $shared[$productId] = $product === null ? null : ['product' => $product, 'sizes' => self::setSizes($product)]
                     + array_combine(['description', 'left_out'], $this->description((string) $product['description_html'], $product['features']));
             }
             if ($color !== null && $shared[$productId] !== null) {
@@ -334,14 +339,14 @@ final class StockFromWholesale
     }
 
     /**
-     * The set: the wholesale sizes that are waist sizes the stock sells, each with the wholesale set's pieces per size.
+     * The set: the wholesale sizes that are waist sizes the stock sells, PCS_PER_SIZE pieces of each.
      *
      * @param array<string, mixed> $product
      * @return list<array{size: string, pcs: int}>
      */
-    private function setSizes(array $product): array
+    private static function setSizes(array $product): array
     {
-        $pcs = min(max(1, (int) $this->catalog->rules($product)['set_pcs_per_size']), StockStyle::MAX_PCS_PER_SIZE);
+        $pcs = min(self::PCS_PER_SIZE, StockStyle::MAX_PCS_PER_SIZE);
         $sizes = [];
         foreach ($product['sizes'] as $size) {
             $size = trim((string) $size);

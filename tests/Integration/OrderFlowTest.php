@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Integration;
 
 use App\Models\CustomizationOption;
+use App\Services\CartService;
 
 /**
  * Cart → checkout → order → proforma invoice → payment report, plus the admin views.
@@ -67,13 +68,57 @@ final class OrderFlowTest extends OrderTestCase
         self::assertTrue($set['can_checkout']);
         self::assertSame(24000, $set['goods_cents']);
 
-        self::assertSame(422, $this->send('POST', '/v1/cart/lines', ['color_id' => $this->colorA, 'size_qty' => ['XXL' => 5]], null, $cartToken)->status());
+        self::assertSame(422, $this->send('POST', '/v1/cart/lines', ['color_id' => $this->colorA, 'size_qty' => ['S, M' => 5]], null, $cartToken)->status());
         self::assertSame(422, $this->send('POST', '/v1/cart/lines', ['color_id' => $this->colorA, 'size_qty' => ['S' => -1]], null, $cartToken)->status());
 
         $session = $this->signup(self::BUYER, ['cart_token' => $cartToken]);
         $mine = $this->send('GET', '/v1/cart', null, $session['token'])->decoded()['data'];
         self::assertSame(60, $mine['total_pcs'], 'The guest cart moved into the account');
         self::assertSame(0, $this->send('GET', '/v1/cart', null, null, $cartToken)->decoded()['data']['line_count'], 'The guest cart is gone');
+    }
+
+    public function testBuyersCanAddSizesTheStyleDoesNotList(): void
+    {
+        // The style lists S, M and L. Buyers add other sizes (owner request 2026-11-21), written the usual way.
+        $added = $this->send('POST', '/v1/cart/lines', ['color_id' => $this->colorA, 'size_qty' => ['s' => 20, 'xxxl' => 20, ' One  size ' => 20, 'M' => 20]]);
+        self::assertSame(200, $added->status(), (string) json_encode($added->decoded()));
+        $cartToken = $added->decoded()['meta']['cart_token'];
+        $line = $added->decoded()['data']['styles'][0]['colors'][0];
+        self::assertSame(['S', 'M', '3XL', 'One size'], array_map('strval', array_keys((array) $line['size_qty'])), "The style's sizes first, then the added ones");
+        self::assertSame(80, $line['pcs']);
+        self::assertSame(32000, $line['line_cents'], 'Added sizes cost the same per piece');
+        self::assertTrue($added->decoded()['data']['can_checkout']);
+
+        // An added size needs the minimum per size like the others, and adding again adds to it, however it is written.
+        $small = $this->send('PUT', "/v1/cart/lines/{$this->colorA}", ['size_qty' => ['S' => 20, 'M' => 20, 'L' => 20, '38' => 5]], null, $cartToken)->decoded()['data'];
+        self::assertSame(['38'], $small['styles'][0]['colors'][0]['small_sizes']);
+        self::assertFalse($small['can_checkout']);
+        $more = $this->send('POST', '/v1/cart/lines', ['color_id' => $this->colorA, 'size_qty' => ['W 38' => 15]], null, $cartToken)->decoded()['data'];
+        self::assertSame(['S' => 20, 'M' => 20, 'L' => 20, '38' => 20], (array) $more['styles'][0]['colors'][0]['size_qty']);
+        self::assertTrue($more['can_checkout']);
+
+        foreach (['', '  ', 'S, M', '38×2', '<b>40</b>', str_repeat('A', CartService::MAX_SIZE_LENGTH + 1)] as $size) {
+            $refused = $this->send('POST', '/v1/cart/lines', ['color_id' => $this->colorA, 'size_qty' => [$size => 20]], null, $cartToken);
+            self::assertSame(422, $refused->status(), "Size \"{$size}\"");
+        }
+
+        // Up to 10 added sizes per color.
+        $tenSizes = array_fill_keys(array_map('strval', range(40, 49)), 20);
+        self::assertSame(200, $this->send('PUT', "/v1/cart/lines/{$this->colorA}", ['size_qty' => $tenSizes], null, $cartToken)->status());
+        self::assertSame(422, $this->send('PUT', "/v1/cart/lines/{$this->colorA}", ['size_qty' => $tenSizes + ['50' => 20]], null, $cartToken)->status());
+        self::assertSame(422, $this->send('POST', '/v1/cart/lines', ['color_id' => $this->colorA, 'size_qty' => ['XL' => 20]], null, $cartToken)->status());
+    }
+
+    public function testAnOrderKeepsTheSizesTheBuyerAdded(): void
+    {
+        [$token, $addressId] = $this->readyBuyer(self::BUYER);
+        $this->send('POST', '/v1/cart/lines', ['color_id' => $this->colorA, 'size_qty' => ['40' => 20, '3xl' => 20]], $token);
+
+        $placed = $this->send('POST', '/v1/account/orders', ['address_id' => $addressId, 'shipping_mode' => 'forwarder', 'addons' => [], 'accept_terms' => true], $token);
+        self::assertSame(201, $placed->status(), (string) json_encode($placed->decoded()));
+        $line = $placed->decoded()['data']['lines'][0];
+        self::assertSame(['S' => 20, 'M' => 20, 'L' => 20, '3XL' => 20, '40' => 20], $line['size_qty'], "The style's sizes in its order, then the added ones");
+        self::assertSame([100, 40000], [$line['qty'], $line['line_cents']]);
     }
 
     public function testVolumeTiersCountAllColorsOfAStyle(): void

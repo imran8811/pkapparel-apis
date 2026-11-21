@@ -310,7 +310,6 @@ final class StockApiTest extends IntegrationTestCase
             'description_html' => '<p>Five-pocket straight jeans in rigid denim.</p><p>Made to order in our factory, from 100 pieces per color.</p>',
             'features' => ['Five-pocket styling'],
             'sizes' => ['30', '32', '34', '36'],
-            'set_pcs_per_size' => 2,
             'price_cents' => 650,
         ];
         $product = $this->admin('POST', '/v1/admin/products', $input);
@@ -400,7 +399,7 @@ final class StockApiTest extends IntegrationTestCase
         $style = function (string $key, string $type, string $code, array $specs): int {
             $input = [
                 'name' => "Test stock men's {$key}", 'slug' => "test-stock-{$key}", 'segment' => 'men', 'product_type' => $type,
-                'specs' => $specs, 'sizes' => ['30', '32', '34', '36'], 'set_pcs_per_size' => 2, 'price_cents' => 550,
+                'specs' => $specs, 'sizes' => ['30', '32', '34', '36'], 'price_cents' => 550,
             ];
             $product = $this->admin('POST', '/v1/admin/products', $input);
             self::assertSame(201, $product->status(), (string) $product->body());

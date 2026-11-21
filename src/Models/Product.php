@@ -28,7 +28,7 @@ final class Product
     public const FILLABLE = [
         'slug', 'name', 'style_no', 'segment', 'product_type', 'fit', 'fabric', 'composition', 'fabric_weight', 'stretch',
         'wash', 'closure', 'attributes', 'description_html', 'features', 'size_system', 'sizes', 'size_chart_id', 'price_cents', 'moq_per_color',
-        'set_pcs_per_size', 'min_pcs_per_size', 'lead_time_days', 'sample_price_cents', 'piece_weight_g', 'pcs_per_carton', 'carton_length_mm',
+        'min_pcs_per_size', 'lead_time_days', 'sample_price_cents', 'piece_weight_g', 'pcs_per_carton', 'carton_length_mm',
         'carton_width_mm', 'carton_height_mm', 'carton_weight_g', 'seo_title', 'seo_description', 'status', 'is_featured',
         'sort_order',
     ];
@@ -265,7 +265,7 @@ final class Product
         }
         $attributes = json_decode((string) ($row['attributes'] ?? ''), true);
         $row['attributes'] = is_array($attributes) ? $attributes : [];
-        foreach (['id', 'size_chart_id', 'price_cents', 'moq_per_color', 'set_pcs_per_size', 'min_pcs_per_size', 'lead_time_days', 'sample_price_cents',
+        foreach (['id', 'size_chart_id', 'price_cents', 'moq_per_color', 'min_pcs_per_size', 'lead_time_days', 'sample_price_cents',
             'piece_weight_g', 'pcs_per_carton', 'carton_length_mm', 'carton_width_mm', 'carton_height_mm', 'carton_weight_g',
             'sort_order', 'price_min', 'price_max', 'color_count'] as $column) {
             if (isset($row[$column])) {

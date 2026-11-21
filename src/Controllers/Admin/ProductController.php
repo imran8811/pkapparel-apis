@@ -234,7 +234,6 @@ final class ProductController extends AdminController
             'size_chart_id' => 'nullable|int|min:1',
             'price_cents' => 'required|int|min:1|max:100000000',
             'moq_per_color' => 'nullable|int|min:1|max:100000',
-            'set_pcs_per_size' => 'nullable|int|min:1|max:50',
             'min_pcs_per_size' => 'nullable|int|min:1|max:10000',
             'lead_time_days' => 'nullable|int|min:1|max:365',
             'sample_price_cents' => 'nullable|int|min:0|max:10000000',
@@ -251,7 +250,7 @@ final class ProductController extends AdminController
             'sort_order' => 'nullable|int|min:0|max:1000000',
         ])->validate();
 
-        $data += array_fill_keys(['style_no', 'size_chart_id', 'moq_per_color', 'set_pcs_per_size', 'min_pcs_per_size', 'lead_time_days', 'sample_price_cents', 'piece_weight_g', 'pcs_per_carton',
+        $data += array_fill_keys(['style_no', 'size_chart_id', 'moq_per_color', 'min_pcs_per_size', 'lead_time_days', 'sample_price_cents', 'piece_weight_g', 'pcs_per_carton',
             'carton_length_mm', 'carton_width_mm', 'carton_height_mm', 'carton_weight_g', 'seo_title', 'seo_description'], null);
         $data['status'] ??= 'draft';
         $data['is_featured'] ??= false;

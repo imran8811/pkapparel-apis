@@ -344,13 +344,18 @@ final class Order
         return array_map(static fn (array $row): array => self::decode($row), $rows);
     }
 
-    /** @return list<array<string, mixed>> */
+    /** @return list<array<string, mixed>> The lines, each with its pieces in size order (the style's sizes first). */
     public function lines(int $orderId): array
     {
-        $rows = $this->db->fetchAll('SELECT * FROM order_lines WHERE order_id = ? ORDER BY sort_order, id', [$orderId]);
+        $rows = $this->db->fetchAll(
+            'SELECT ol.*, p.sizes AS style_sizes FROM order_lines ol LEFT JOIN products p ON p.id = ol.product_id
+             WHERE ol.order_id = ? ORDER BY ol.sort_order, ol.id',
+            [$orderId],
+        );
 
         return array_map(static function (array $row): array {
             $sizes = json_decode((string) $row['size_qty'], true);
+            $styleSizes = json_decode((string) ($row['style_sizes'] ?? ''), true);
 
             return [
                 'product_id' => $row['product_id'] === null ? null : (int) $row['product_id'],
@@ -367,7 +372,10 @@ final class Order
                 'color_name' => (string) $row['color_name'],
                 'color_hex' => $row['color_hex'],
                 'image_path' => $row['image_path'],
-                'size_qty' => array_map('intval', is_array($sizes) ? $sizes : []),
+                'size_qty' => ProductTypes::sortSizeQty(
+                    array_map('intval', is_array($sizes) ? $sizes : []),
+                    is_array($styleSizes) ? array_map('strval', $styleSizes) : [],
+                ),
                 'qty' => (int) $row['qty'],
                 'unit_price_cents' => (int) $row['unit_price_cents'],
                 'line_cents' => (int) $row['line_cents'],

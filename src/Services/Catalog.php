@@ -13,7 +13,7 @@ use App\Models\SizeChart;
 
 /**
  * What the shop shows: style cards for lists and full product pages (with approved buyer reviews).
- * Order rules a style leaves empty (MOQ, minimum per size, set size, lead time, sample price) come from the "commerce" settings.
+ * Order rules a style leaves empty (MOQ, minimum per size, lead time, sample price) come from the "commerce" settings.
  */
 final class Catalog
 {
@@ -143,7 +143,7 @@ final class Catalog
         ];
     }
 
-    /** @return array{moq_per_color: int, set_pcs_per_size: int, min_pcs_per_size: int, lead_time_days: int, sample_price_cents: int} */
+    /** @return array{moq_per_color: int, min_pcs_per_size: int, lead_time_days: int, sample_price_cents: int} */
     public function rules(array $product): array
     {
         $commerce = $this->settings->get('commerce', []);
@@ -151,7 +151,6 @@ final class Catalog
 
         return [
             'moq_per_color' => $product['moq_per_color'] ?? (int) ($commerce['moq_per_color'] ?? 100),
-            'set_pcs_per_size' => $product['set_pcs_per_size'] ?? (int) ($commerce['set_pcs_per_size'] ?? 2),
             'min_pcs_per_size' => $product['min_pcs_per_size'] ?? (int) ($commerce['min_pcs_per_size'] ?? Commerce::MIN_PCS_PER_SIZE),
             'lead_time_days' => $product['lead_time_days'] ?? (int) ($commerce['lead_time_days'] ?? 30),
             'sample_price_cents' => $product['sample_price_cents'] ?? (int) ($commerce['sample_price_cents'] ?? Commerce::SAMPLE_PRICE_CENTS),
